@@ -1,0 +1,40 @@
+# Зависимости
+node_modules/
+package-lock.json
+
+# База данных
+*.sqlite
+*.sqlite-journal
+
+# Логи
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Сборка
+dist/
+dist-ssr/
+*.local
+
+# Env файлы
+.env
+.env.local
+.env.*.local
+pg-backup.local.env
+
+# Не коммитить секреты!
+.env
+*.log
+node_modules/
+database.sqlite
