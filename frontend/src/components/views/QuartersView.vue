@@ -71,8 +71,9 @@ import BlockCard from '@/components/common/Block.vue'
 import TaskCardModal from '@/components/common/TaskCardModal.vue'
 import { useTasks } from '@/composables/useTasks'
 import { useNotification } from '@/composables/useNotification'
+import { getBlockCoveredIndexes, layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
 
-// Экран "По кварталам": раскладывает этапы по квартальным колонкам без наложений.
+// Экран "По кварталам": span startDate→releaseDate и вертикальная паковка, как на карте Шивы.
 const emit = defineEmits(['editBlock'])
 
 const blocks = inject('blocks')
@@ -106,8 +107,6 @@ const { showNotificationMessage } = useNotification()
 
 const BASE_YEAR = 2026
 const QUARTER_WIDTH = 360
-const MIN_QUARTER_STACK_GAP = 12
-const MAX_QUARTER_STACK_GAP = 40
 const QUARTER_TASK_EXTRA_HEIGHT = 18
 
 const timelineWrapper = ref(null)
@@ -176,19 +175,23 @@ const getQuarterIndexFromDate = (dateLike) => {
   return (date.getFullYear() - BASE_YEAR) * 4 + Math.floor(date.getMonth() / 3)
 }
 
+const collectBlockQuarterIndexes = () => {
+  const indexes = []
+  sortedBlocks.value.forEach((block) => {
+    getBlockCoveredIndexes(block, getQuarterIndexFromDate).forEach((index) => {
+      if (index >= 0) indexes.push(index)
+    })
+  })
+  return indexes
+}
+
 const firstQuarterWithBlock = computed(() => {
-  if (!sortedBlocks.value.length) return 0
-  const indexes = sortedBlocks.value
-    .filter(b => b.releaseDate)
-    .map(b => getQuarterIndexFromDate(b.releaseDate))
+  const indexes = collectBlockQuarterIndexes()
   return indexes.length ? Math.min(...indexes) : 0
 })
 
 const lastQuarterWithBlock = computed(() => {
-  if (!sortedBlocks.value.length) return 3
-  const indexes = sortedBlocks.value
-    .filter(b => b.releaseDate)
-    .map(b => getQuarterIndexFromDate(b.releaseDate))
+  const indexes = collectBlockQuarterIndexes()
   return indexes.length ? Math.max(...indexes) : 3
 })
 
@@ -216,8 +219,6 @@ const visibleQuartersTotalWidth = computed(() => {
   return last ? last.visibleEndX + 50 : 1200
 })
 
-const clampNumber = (value, min, max) => Math.max(min, Math.min(max, value))
-
 const refreshMeasuredBlockHeights = async () => {
   await nextTick()
   const root = timelineGrid.value
@@ -226,8 +227,13 @@ const refreshMeasuredBlockHeights = async () => {
   root.querySelectorAll('.block[data-block-id]').forEach((node) => {
     const id = String(node.getAttribute('data-block-id') || '')
     if (!id) return
-    nextHeights[id] = Math.ceil(node.getBoundingClientRect().height)
+    nextHeights[id] = Math.ceil(node.offsetHeight)
   })
+  const prev = measuredBlockHeights.value
+  const same =
+    Object.keys(nextHeights).length === Object.keys(prev).length &&
+    Object.keys(nextHeights).every((id) => prev[id] === nextHeights[id])
+  if (same) return
   measuredBlockHeights.value = nextHeights
 }
 
@@ -243,76 +249,37 @@ const observeQuarterBlockHeights = () => {
 const getQuarterLayoutHeight = (block) => {
   const estimatedHeight = calculateBlockHeight(block)
   const tasksCount = Array.isArray(block?.tasks) ? block.tasks.length : 0
-  const conservativeEstimatedHeight = estimatedHeight + tasksCount * QUARTER_TASK_EXTRA_HEIGHT
-  const measuredHeight = Number(measuredBlockHeights.value[String(block.id)] || 0)
-  const blockHeight = Math.max(conservativeEstimatedHeight, measuredHeight)
-  // Добавляем небольшой адаптивный буфер, чтобы карточки не касались визуально.
-  const adaptiveBuffer = clampNumber(Math.round(blockHeight * 0.05), 6, 16)
-  return blockHeight + adaptiveBuffer
+  return estimatedHeight + tasksCount * QUARTER_TASK_EXTRA_HEIGHT
 }
 
-const getQuarterLayoutGap = (layoutHeight) => {
-  // Чем выше блок, тем больше межблочный зазор, но в разумных границах.
-  return clampNumber(Math.round(layoutHeight * 0.055), MIN_QUARTER_STACK_GAP, MAX_QUARTER_STACK_GAP)
-}
-
-const blocksByQuarter = computed(() => {
-  const grouped = {}
-  sortedBlocks.value.forEach(block => {
-    if (!block.releaseDate) return
-    const quarterIndex = getQuarterIndexFromDate(block.releaseDate)
-    if (!grouped[quarterIndex]) grouped[quarterIndex] = []
-    grouped[quarterIndex].push(block)
+const quarterLayout = computed(() =>
+  layoutTimelineBlocks({
+    columns: visibleQuartersData.value,
+    blocks: sortedBlocks.value,
+    heights: measuredBlockHeights.value,
+    estimateHeight: getQuarterLayoutHeight,
+    getIndexFromDate: getQuarterIndexFromDate
   })
-
-  Object.keys(grouped).forEach(key => {
-    let currentTop = 20
-    grouped[key].forEach(block => {
-      const layoutHeight = getQuarterLayoutHeight(block)
-      const layoutGap = getQuarterLayoutGap(layoutHeight)
-      block.positionInQuarter = currentTop
-      currentTop += layoutHeight + layoutGap
-    })
-  })
-
-  return grouped
-})
+)
 
 const totalHeight = computed(() => {
-  let maxHeight = 0
-  Object.values(blocksByQuarter.value).forEach(quarterBlocks => {
-    let quarterHeight = 20
-    quarterBlocks.forEach(block => {
-      const layoutHeight = getQuarterLayoutHeight(block)
-      const layoutGap = getQuarterLayoutGap(layoutHeight)
-      quarterHeight += layoutHeight + layoutGap
-    })
-    if (quarterHeight > maxHeight) maxHeight = quarterHeight
-  })
+  const columnHeights = quarterLayout.value.columnBodyMinHeightsPx || []
+  const maxHeight = columnHeights.length ? Math.max(...columnHeights) : 0
   return Math.max(maxHeight + 60, 520)
 })
 
-const getVisibleQuarterBlockWidth = () => {
-  const base = QUARTER_WIDTH - 30
-  return Math.min(QUARTER_WIDTH - 10, Math.round(base * 1.1))
+const getVisibleQuarterBlockStyle = (block) => {
+  const position = quarterLayout.value.positions[String(block?.id)]
+  if (!position) {
+    return { display: 'none' }
+  }
+  return {
+    left: position.left + 'px',
+    top: position.top + 'px',
+    width: position.width + 'px',
+    backgroundColor: getBlockBackgroundColor(block)
+  }
 }
-
-const getVisibleQuarterBlockLeft = (block) => {
-  if (!block.releaseDate) return 0
-  const quarterIndex = getQuarterIndexFromDate(block.releaseDate)
-  const quarterData = visibleQuartersData.value.find(q => q.index === quarterIndex)
-  if (!quarterData) return 0
-  const blockWidth = getVisibleQuarterBlockWidth()
-  return quarterData.visibleStartX + (quarterData.width - blockWidth) / 2
-}
-
-const getVisibleQuarterBlockStyle = (block) => ({
-  left: getVisibleQuarterBlockLeft(block) + 'px',
-  top: (block.positionInQuarter || 20) + 'px',
-  width: getVisibleQuarterBlockWidth() + 'px',
-  backgroundColor: getBlockBackgroundColor(block),
-  minHeight: calculateBlockHeight(block) + 'px'
-})
 
 const startEditingDate = (block) => {
   block.editingDate = true

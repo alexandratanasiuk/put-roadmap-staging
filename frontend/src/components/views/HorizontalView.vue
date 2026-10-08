@@ -198,6 +198,7 @@ import { useDragLines } from '@/composables/useDragLines'
 import { useNotification } from '@/composables/useNotification'
 import BlockCard from '@/components/common/Block.vue'
 import TaskCardModal from '@/components/common/TaskCardModal.vue'
+import { layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
 
 // Экран "По месяцам": месячная шкала с ресайзом, линиями сроков и DnD этапов/задач.
 // Получаем данные от родителя через inject
@@ -249,9 +250,7 @@ const { showNotificationMessage } = useNotification()
 const timelineWrapper = ref(null)
 const horizontalHeader = ref(null)
 const timelineGrid = ref(null)
-const BLOCK_STACK_GAP = 190
 const MONTH_TASK_EXTRA_HEIGHT = 18
-const MONTH_STACK_START_TOP = 30
 const measuredBlockHeights = ref({})
 let blockResizeObserver = null
 const resizingMonth = ref(null)
@@ -275,8 +274,13 @@ const refreshMeasuredBlockHeights = async () => {
   root.querySelectorAll('.block[data-block-id]').forEach((node) => {
     const id = String(node.getAttribute('data-block-id') || '')
     if (!id) return
-    nextHeights[id] = Math.ceil(node.getBoundingClientRect().height)
+    nextHeights[id] = Math.ceil(node.offsetHeight)
   })
+  const prev = measuredBlockHeights.value
+  const same =
+    Object.keys(nextHeights).length === Object.keys(prev).length &&
+    Object.keys(nextHeights).every((id) => prev[id] === nextHeights[id])
+  if (same) return
   measuredBlockHeights.value = nextHeights
 }
 
@@ -292,9 +296,7 @@ const observeMonthBlockHeights = () => {
 const getMonthLayoutHeight = (block) => {
   const estimatedHeight = calculateBlockHeight(block)
   const tasksCount = Array.isArray(block?.tasks) ? block.tasks.length : 0
-  const conservativeEstimatedHeight = estimatedHeight + tasksCount * MONTH_TASK_EXTRA_HEIGHT
-  const measuredHeight = Number(measuredBlockHeights.value[String(block?.id)] || 0)
-  return Math.max(conservativeEstimatedHeight, measuredHeight)
+  return estimatedHeight + tasksCount * MONTH_TASK_EXTRA_HEIGHT
 }
 
 const openTaskCardModal = (block, task) => {
@@ -350,74 +352,44 @@ const sortedBlocks = computed(() => {
   return [...blocks.value].sort((a, b) => new Date(a.releaseDate) - new Date(b.releaseDate))
 })
 
-// Группировка блоков по месяцам для вертикального позиционирования
-const blocksByMonth = computed(() => {
-  const grouped = {}
-  sortedBlocks.value.forEach(block => {
-    if (!block.releaseDate) return
-    const month = getAbsoluteMonthIndexFromDate(block.releaseDate)
-    if (!grouped[month]) grouped[month] = []
-    grouped[month].push(block)
+const monthLayout = computed(() =>
+  layoutTimelineBlocks({
+    columns: visibleMonthsData.value,
+    blocks: sortedBlocks.value,
+    heights: measuredBlockHeights.value,
+    estimateHeight: getMonthLayoutHeight,
+    getIndexFromDate: getAbsoluteMonthIndexFromDate
   })
-  
-  Object.keys(grouped).forEach(monthKey => {
-    let currentTop = MONTH_STACK_START_TOP
-    grouped[monthKey].forEach((block) => {
-      block.positionInMonth = currentTop
-      currentTop += getMonthLayoutHeight(block) + BLOCK_STACK_GAP
-    })
-  })
-  
-  return grouped
-})
+)
 
-// Вычисление общей высоты
 const totalHeight = computed(() => {
-  let maxHeight = 0
-  Object.values(blocksByMonth.value).forEach(monthBlocks => {
-    let monthHeight = 20
-    monthBlocks.forEach(block => {
-      monthHeight += getMonthLayoutHeight(block) + BLOCK_STACK_GAP
-    })
-    if (monthHeight > maxHeight) maxHeight = monthHeight
-  })
+  const columnHeights = monthLayout.value.columnBodyMinHeightsPx || []
+  const maxHeight = columnHeights.length ? Math.max(...columnHeights) : 0
   return Math.max(maxHeight + 50, 500)
 })
 
-// Получение позиции блока - ширина зависит от месяца, центрирование
-const getVisibleBlockWidth = (block) => {
-  if (!block.releaseDate) return 280
-  const month = getAbsoluteMonthIndexFromDate(block.releaseDate)
-  const monthData = visibleMonthsData.value.find(m => m.index === month)
-  if (!monthData) return 280
-  // По 5% отступа с каждой стороны внутри колонки месяца.
-  return Math.max(220, Math.round(monthData.width * 0.9))
+const getVisibleBlockPosition = (block) => {
+  return monthLayout.value.positions[String(block?.id)] || null
 }
 
 const getVisibleBlockLeft = (block) => {
-  if (!block.releaseDate) return 0
-  const month = getAbsoluteMonthIndexFromDate(block.releaseDate)
-  const monthData = visibleMonthsData.value.find(m => m.index === month)
-  if (!monthData) {
-    return 0
-  }
-  const blockWidth = getVisibleBlockWidth(block)
-  // Центрируем блок в месяце
-  return monthData.visibleStartX + (monthData.width - blockWidth) / 2
+  return getVisibleBlockPosition(block)?.left || 0
 }
 
 const getVisibleBlockTop = (block) => {
-  return block.positionInMonth || 20
+  return getVisibleBlockPosition(block)?.top || 20
 }
 
 const getVisibleBlockStyle = (block) => {
-  const width = getVisibleBlockWidth(block)
+  const position = getVisibleBlockPosition(block)
+  if (!position) {
+    return { display: 'none' }
+  }
   return {
-    left: getVisibleBlockLeft(block) + 'px',
-    top: getVisibleBlockTop(block) + 'px',
-    width: width + 'px',
-    backgroundColor: getBlockBackgroundColor(block),
-    minHeight: calculateBlockHeight(block) + 'px'
+    left: position.left + 'px',
+    top: position.top + 'px',
+    width: position.width + 'px',
+    backgroundColor: getBlockBackgroundColor(block)
   }
 }
 
@@ -575,11 +547,11 @@ const onResizeHandleLeave = () => {
 
 const onResetMonthWidths = () => {
   stopMonthResize()
-  const widestCurrentBlockWidth = sortedBlocks.value.reduce((maxWidth, block) => {
-    const width = getVisibleBlockWidth(block)
+  const widestSingleColumnWidth = visibleMonthsData.value.reduce((maxWidth, month) => {
+    const width = Math.round(Number(month?.width || 0) * 0.9)
     return Number.isFinite(width) ? Math.max(maxWidth, width) : maxWidth
   }, 0)
-  resetVisibleMonthWidth(widestCurrentBlockWidth)
+  resetVisibleMonthWidth(widestSingleColumnWidth)
 }
 
 defineEmits(['editBlock'])

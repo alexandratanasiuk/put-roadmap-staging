@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
 import { useBlocks } from './useBlocks'
+import { getBlockCoveredIndexes } from '@/utils/timelineSpanningLayout'
 
 /** Сколько пустых месяцев показывать справа после последнего месяца с этапами (0 или 1). */
 const MAX_TRAILING_EMPTY_MONTHS = 1
@@ -92,13 +93,20 @@ export function useDates() {
   }
   const hasCustomMonthWidth = computed(() => Number.isFinite(Number(globalDayWidthOverride.value)))
 
+  const collectBlockMonthIndexes = () => {
+    const indexes = []
+    blocks.value.forEach((block) => {
+      getBlockCoveredIndexes(block, getAbsoluteMonthIndexFromDate).forEach((index) => {
+        if (index >= 0) indexes.push(index)
+      })
+    })
+    return indexes
+  }
+
   // Полная шкала месяцев (с запасом вправо для планирования).
   const extendedTimelineMonths = computed(() => {
     const endBaseIndex = 11
-    const blockMonthIndexes = blocks.value
-      .filter(block => block.releaseDate)
-      .map(block => getAbsoluteMonthIndexFromDate(block.releaseDate))
-      .filter(index => index >= 0)
+    const blockMonthIndexes = collectBlockMonthIndexes()
     const maxBlockMonthIndex = blockMonthIndexes.length ? Math.max(...blockMonthIndexes) : endBaseIndex
     const endIndex = maxBlockMonthIndex + FUTURE_MONTHS_PAD
 
@@ -119,32 +127,22 @@ export function useDates() {
     return result
   })
 
-  // Границы месяцев, где реально есть этапы.
+  // Границы месяцев, где реально есть этапы (включая span startDate → releaseDate).
   const firstMonthWithBlock = computed(() => {
-    if (blocks.value.length === 0) return 0
-    const months = blocks.value
-      .map(block => getAbsoluteMonthIndexFromDate(block.releaseDate))
-      .filter(idx => idx >= 0)
+    const months = collectBlockMonthIndexes()
     if (months.length === 0) return 0
     return Math.min(...months)
   })
 
   const lastMonthWithBlock = computed(() => {
-    if (blocks.value.length === 0) return 11
-    const months = blocks.value
-      .map(block => getAbsoluteMonthIndexFromDate(block.releaseDate))
-      .filter(idx => idx >= 0)
+    const months = collectBlockMonthIndexes()
     if (months.length === 0) return 11
     return Math.max(...months)
   })
 
   const monthsWithBlocks = computed(() => {
     const months = new Set()
-    blocks.value.forEach(block => {
-      if (block.releaseDate) {
-        months.add(getAbsoluteMonthIndexFromDate(block.releaseDate))
-      }
-    })
+    collectBlockMonthIndexes().forEach((index) => months.add(index))
     return months
   })
 

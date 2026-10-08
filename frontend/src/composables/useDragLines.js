@@ -151,20 +151,13 @@ export function useDragLines(
   }
 
   // Прямое обновление DOM-позиций для максимально плавного превью.
-  const updateElementPositions = (blockId, lineX, blockX, blockY) => {
+  // Карточка остаётся на span start→end; двигается только линия срока.
+  const updateElementPositions = (blockId, lineX) => {
     const line = document.querySelector(`.timeline-line[data-block-id="${blockId}"]`)
     if (line) {
       line.style.transition = 'none'
       line.style.left = lineX + 'px'
       line.classList.add('line-dragging-active')
-    }
-    
-    const block = document.querySelector(`.block[data-block-id="${blockId}"]`)
-    if (block) {
-      block.style.transition = 'none'
-      block.style.left = blockX + 'px'
-      block.style.top = blockY + 'px'
-      block.classList.add('block-dragging')
     }
   }
 
