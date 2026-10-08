@@ -392,9 +392,8 @@ const onBlockDragEnd = () => {
   pointer-events: none;
 }
 .block.completed {
-  opacity: 0.6;
-  background: #f8fafc !important;
-  border-color: #cbd5e1;
+  background: #90EE90 !important;
+  border-color: #86efac;
 }
 .block-date-editor input[type="date"] {
   width: 100%;

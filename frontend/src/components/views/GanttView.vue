@@ -905,7 +905,7 @@ import { useNotification } from '@/composables/useNotification'
 import linkIcon from '@/assets/link-icon.png'
 
 // Gantt-экран: таймлайн этапов/задач, зависимости, критический путь и ресурсные инструменты.
-const { blocks, updateBlock, getTaskProgress, blockHasTaskInProgress } = useBlocks()
+const { blocks, updateBlock, updateStageDependencies, patchStageDepLabel, getTaskProgress, blockHasTaskInProgress } = useBlocks()
 const { showNotificationMessage } = useNotification()
 const {
   cycleTaskStatus,
@@ -2507,20 +2507,14 @@ const undoLastStageOrTaskEdit = async () => {
         const liveSucc = (blocks.value || []).find((b) => String(b.id) === String(snap.succBlockId))
         if (!liveSucc) return
 
-        const res = await updateBlock({
-          ...liveSucc,
-          stagePredecessorIds: normalizeStagePredecessorIds(snap.prevStagePredecessorIds)
-        })
+        const res = await updateStageDependencies(
+          liveSucc.id,
+          Array.isArray(snap.prevStageDependencies) ? snap.prevStageDependencies : []
+        )
         if (!res?.success) {
           showNotificationMessage('Не удалось отменить изменение зависимостей этапов', 'error')
           return
         }
-
-        // Восстанавливаем localStorage-хранилища линий.
-        stageDepStorage.value = snap.prevStageDepStorage || {}
-        stageDepLabels.value = snap.prevStageDepLabels || {}
-        writeStageDepStorage()
-        writeStageDepLabels()
 
         showNotificationMessage('↩️ Отмена последнего изменения линий связи этапов', 'success')
         lastManualGanttEditSnapshot.value = null
@@ -3493,20 +3487,21 @@ const openStageLabelEditor = (e, seg) => {
   }
 }
 
-const saveStageLabelEditor = () => {
+const saveStageLabelEditor = async () => {
   if (readOnly.value) return
   const ed = stageLabelEditor.value
   if (!ed) return
   const text = (ed.text || '').trim()
   const dateStr = (ed.dateStr || '').trim()
-  const nextMap = { ...stageDepLabels.value }
-  if (!text && !dateStr) {
-    delete nextMap[ed.labelKey]
-  } else {
-    nextMap[ed.labelKey] = { text, kind: ed.kind, dateStr }
+  const res = await patchStageDepLabel(ed.toBlockId, ed.fromBlockId, {
+    text,
+    kind: ed.kind || 'comment',
+    dateStr
+  })
+  if (!res?.success) {
+    showNotificationMessage(res?.message || 'Не удалось сохранить подпись связи', 'error')
+    return
   }
-  stageDepLabels.value = nextMap
-  writeStageDepLabels()
   closeStageLabelEditor()
 }
 
@@ -3602,6 +3597,113 @@ const getStagePredIds = (block) => {
   if (fromBlock.length) return fromBlock
   return normalizeStagePredecessorIds(stageDepStorage.value[String(block?.id)])
 }
+
+const stageDepsPayloadFor = (block, predIds = null) => {
+  const ids = predIds || getStagePredIds(block)
+  return ids.map((id) => {
+    const lab = stageDepLabels.value[getStageLabelKey(id, block.id)] || {}
+    const fromApi = (block.stageDependencies || []).find((d) => String(d.predecessorId) === String(id)) || {}
+    return {
+      predecessorId: String(id),
+      depType: fromApi.depType || 'FS',
+      lagDays: Number(fromApi.lagDays) || 0,
+      labelText: lab.text || fromApi.labelText || '',
+      labelKind: lab.kind || fromApi.labelKind || 'comment',
+      labelDate: lab.dateStr || fromApi.labelDate || ''
+    }
+  })
+}
+
+let migratingLocalStageDeps = false
+const migrateLocalStageDeps = async () => {
+  if (migratingLocalStageDeps || readOnly.value) return
+  if (!blocks.value.length) return
+  const stored = readStageDepStorage()
+  const labels = readStageDepLabels()
+  const storedKeys = Object.keys(stored)
+  const labelKeys = Object.keys(labels)
+  if (!storedKeys.length && !labelKeys.length) return
+  migratingLocalStageDeps = true
+  try {
+    const nextStored = { ...stored }
+    const nextLabels = { ...labels }
+    const currentIds = new Set((blocks.value || []).map((b) => String(b.id)))
+    for (const b of blocks.value) {
+      const bid = String(b.id)
+      const apiIds = normalizeStagePredecessorIds(b.stagePredecessorIds)
+      const localIds = normalizeStagePredecessorIds(nextStored[bid])
+      if (apiIds.length) {
+        delete nextStored[bid]
+        for (const key of Object.keys(nextLabels)) {
+          if (key.endsWith(`>${bid}`)) delete nextLabels[key]
+        }
+        continue
+      }
+      if (!localIds.length) continue
+      const deps = localIds.map((id) => {
+        const lab = nextLabels[getStageLabelKey(id, bid)] || labels[getStageLabelKey(id, bid)] || {}
+        return {
+          predecessorId: String(id),
+          depType: 'FS',
+          lagDays: 0,
+          labelText: lab.text || '',
+          labelKind: lab.kind || 'comment',
+          labelDate: lab.dateStr || ''
+        }
+      })
+      const res = await updateStageDependencies(b.id, deps)
+      if (!res.success) continue
+      delete nextStored[bid]
+      for (const key of Object.keys(nextLabels)) {
+        if (key.endsWith(`>${bid}`)) delete nextLabels[key]
+      }
+    }
+    for (const key of Object.keys(nextStored)) {
+      if (currentIds.has(String(key)) && !nextStored[key]?.length) delete nextStored[key]
+    }
+    stageDepStorage.value = nextStored
+    writeStageDepStorage()
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        if (Object.keys(nextStored).length) {
+          window.localStorage.setItem(STAGE_DEP_STORAGE_KEY, JSON.stringify(nextStored))
+        } else {
+          window.localStorage.removeItem(STAGE_DEP_STORAGE_KEY)
+        }
+        if (Object.keys(nextLabels).length) {
+          window.localStorage.setItem(STAGE_DEP_LABELS_KEY, JSON.stringify(nextLabels))
+        } else {
+          window.localStorage.removeItem(STAGE_DEP_LABELS_KEY)
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  } finally {
+    migratingLocalStageDeps = false
+  }
+}
+
+watch(blocks, () => {
+  const next = { ...stageDepLabels.value }
+  for (const b of blocks.value || []) {
+    for (const d of b.stageDependencies || []) {
+      const pred = d?.predecessorId
+      if (!pred) continue
+      const key = getStageLabelKey(pred, b.id)
+      const text = d.labelText || ''
+      const dateStr = d.labelDate || ''
+      const kind = ['comment', 'checkpoint', 'date'].includes(d.labelKind) ? d.labelKind : 'comment'
+      if (!text.trim() && !dateStr.trim()) {
+        delete next[key]
+      } else {
+        next[key] = { text, kind, dateStr }
+      }
+    }
+  }
+  stageDepLabels.value = next
+  migrateLocalStageDeps()
+}, { deep: true, immediate: true })
 
 const wouldCreateStageCycle = (sourceId, targetId) => {
   const sourceKey = String(sourceId)
@@ -3989,18 +4091,10 @@ const onStageLinkPointerUp = async (e) => {
     at: Date.now(),
     scope: 'stage',
     succBlockId: String(target.id),
-    prevStagePredecessorIds: normalizeStagePredecessorIds(target.stagePredecessorIds),
-    prevStageDepStorage: JSON.parse(JSON.stringify(stageDepStorage.value || {})),
-    prevStageDepLabels: JSON.parse(JSON.stringify(stageDepLabels.value || {}))
+    prevStageDependencies: stageDepsPayloadFor(target)
   }
 
-  const current = normalizeStagePredecessorIds(target.stagePredecessorIds)
-  if (!current.length) {
-    const fallback = normalizeStagePredecessorIds(stageDepStorage.value[String(target.id)])
-    if (fallback.length) {
-      current.push(...fallback)
-    }
-  }
+  const current = getStagePredIds(target)
   if (current.some((id) => String(id) === String(source.id))) {
     lastManualGanttEditSnapshot.value = null
     showNotificationMessage('Такая связь этапов уже есть', 'warning')
@@ -4012,16 +4106,13 @@ const onStageLinkPointerUp = async (e) => {
     return
   }
 
-  const updated = {
-    ...target,
-    stagePredecessorIds: [...current, source.id]
-  }
-  stageDepStorage.value[String(target.id)] = normalizeStagePredecessorIds(updated.stagePredecessorIds)
-  writeStageDepStorage()
-  const res = await updateBlock(updated)
+  const res = await updateStageDependencies(
+    target.id,
+    [...stageDepsPayloadFor(target, current), { predecessorId: String(source.id), depType: 'FS', lagDays: 0, labelText: '', labelKind: 'comment', labelDate: '' }]
+  )
   if (!res.success) {
     lastManualGanttEditSnapshot.value = null
-    showNotificationMessage('Не удалось сохранить связь этапов', 'error')
+    showNotificationMessage(res.message || 'Не удалось сохранить связь этапов', 'error')
   }
 }
 
@@ -4041,33 +4132,16 @@ const removeStageDependency = async (edge) => {
     at: Date.now(),
     scope: 'stage',
     succBlockId: String(succ.id),
-    prevStagePredecessorIds: normalizeStagePredecessorIds(succ.stagePredecessorIds),
-    prevStageDepStorage: JSON.parse(JSON.stringify(stageDepStorage.value || {})),
-    prevStageDepLabels: JSON.parse(JSON.stringify(stageDepLabels.value || {}))
-  }
-
-  const lk = getStageLabelKey(edge.fromBlockId, edge.toBlockId)
-  if (stageDepLabels.value[lk]) {
-    const nextLabels = { ...stageDepLabels.value }
-    delete nextLabels[lk]
-    stageDepLabels.value = nextLabels
-    writeStageDepLabels()
+    prevStageDependencies: stageDepsPayloadFor(succ)
   }
 
   const nextPreds = getStagePredIds(succ)
     .filter((id) => String(id) !== String(edge.fromBlockId))
 
-  const updated = {
-    ...succ,
-    stagePredecessorIds: nextPreds
-  }
-  stageDepStorage.value[String(succ.id)] = normalizeStagePredecessorIds(nextPreds)
-  writeStageDepStorage()
-
-  const res = await updateBlock(updated)
+  const res = await updateStageDependencies(succ.id, stageDepsPayloadFor(succ, nextPreds))
   if (!res.success) {
     lastManualGanttEditSnapshot.value = null
-    showNotificationMessage('Не удалось удалить связь этапов', 'error')
+    showNotificationMessage(res.message || 'Не удалось удалить связь этапов', 'error')
   }
 }
 

@@ -1,4 +1,6 @@
 import { ref } from 'vue'
+import axios from 'axios'
+import { useAuth } from './useAuth'
 import { useBlocks } from './useBlocks'
 import {
   removePredecessorIdFromAllTasks,
@@ -11,9 +13,19 @@ const TASK_EDIT_BLUR_GUARD_MS = 450
 const taskEditBlurGuardUntil = new WeakMap()
 
 export function useTasks() {
-  // Базовые операции с этапом (сохранение + принудительный пересчет layout).
-  const { updateBlock, forceUpdatePositions } = useBlocks()
+  const { isReadOnly, API_URL } = useAuth()
+  const { updateBlock, applyBlockFromApi, forceUpdatePositions } = useBlocks()
+  const apiPath = (path) => `${API_URL}${path.startsWith('/') ? path : `/${path}`}`
   const taskStatusUpdateInFlight = new Set()
+
+  const apiErrorMessage = (error, fallback) =>
+    error?.response?.data?.error || error?.message || fallback
+
+  const applyHydratedBlock = (apiBlock) => {
+    const merged = applyBlockFromApi(apiBlock)
+    if (merged) forceUpdatePositions()
+    return merged
+  }
 
   // Состояние Drag&Drop задач.
   const draggedTask = ref(null)
@@ -78,24 +90,15 @@ export function useTasks() {
 
   // Создает новую задачу в конце списка этапа.
   const addTask = async (block) => {
-    const newTask = {
-      id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
-      title: 'Новая задача',
-      linkUrl: '',
-      linkNote: '',
-      status: 'todo',
-      order: block.tasks ? block.tasks.length : 0,
-      predecessorIds: []
-    }
-    const updatedTasks = block.tasks ? [...block.tasks, newTask] : [newTask]
-    const updatedBlock = { ...block, tasks: updatedTasks }
-    const result = await updateBlock(updatedBlock)
-    if (result.success) {
-      forceUpdatePositions()
-    }
-    return {
-      ...result,
-      newTaskId: newTask.id
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
+    if (!block?.id) return { success: false, message: 'Некорректные данные этапа' }
+    try {
+      const response = await axios.post(apiPath(`/blocks/${block.id}/tasks`), { title: 'Новая задача' })
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data, newTaskId: response.data?.newTaskId }
+    } catch (error) {
+      console.error('❌ Ошибка создания задачи:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка создания задачи') }
     }
   }
 
@@ -107,22 +110,20 @@ export function useTasks() {
     if (taskStatusUpdateInFlight.has(inFlightKey)) {
       return { success: false, busy: true }
     }
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
     taskStatusUpdateInFlight.add(inFlightKey)
     const previousTasks = Array.isArray(block.tasks) ? [...block.tasks] : []
     try {
       const nextStatus = getNextStatus(task.status || 'todo')
       const updatedTasks = previousTasks.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t))
-      // Optimistic UI: пользователь видит новый статус мгновенно.
       block.tasks = updatedTasks
-      const updatedBlock = { ...block, tasks: updatedTasks }
-      const result = await updateBlock(updatedBlock)
-      if (!result.success) {
-        // Откат локального оптимистичного обновления при ошибке API.
-        block.tasks = previousTasks
-      } else {
-        forceUpdatePositions()
-      }
-      return result
+      const response = await axios.post(apiPath(`/blocks/${block.id}/tasks/${task.id}/cycle-status`))
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data }
+    } catch (error) {
+      block.tasks = previousTasks
+      console.error('❌ Ошибка смены статуса:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка обновления статуса') }
     } finally {
       taskStatusUpdateInFlight.delete(inFlightKey)
     }
@@ -131,16 +132,16 @@ export function useTasks() {
   // Удаление задачи + очистка зависимостей на нее у остальных задач.
   const deleteTask = async (block, task, event) => {
     if (event) event.stopPropagation()
-    const updatedTasks = removePredecessorIdFromAllTasks(
-      block.tasks.filter(t => t.id !== task.id),
-      task.id
-    )
-    const updatedBlock = { ...block, tasks: updatedTasks }
-    const result = await updateBlock(updatedBlock)
-    if (result.success) {
-      forceUpdatePositions()
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
+    if (!block?.id || !task?.id) return { success: false, message: 'Некорректные данные задачи' }
+    try {
+      const response = await axios.delete(apiPath(`/blocks/${block.id}/tasks/${task.id}`))
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data }
+    } catch (error) {
+      console.error('❌ Ошибка удаления задачи:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка удаления задачи') }
     }
-    return result
   }
 
   // Inline-редактирование названия задачи.
@@ -169,11 +170,15 @@ export function useTasks() {
       return
     }
     const newTitle = task.editValue.trim()
-    const updatedTasks = block.tasks.map(t => t.id === task.id ? { ...t, title: newTitle, isEditing: false } : t)
-    const updatedBlock = { ...block, tasks: updatedTasks }
-    const result = await updateBlock(updatedBlock)
-    if (result.success) forceUpdatePositions()
-    return result
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
+    try {
+      const response = await axios.patch(apiPath(`/blocks/${block.id}/tasks/${task.id}`), { title: newTitle })
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data }
+    } catch (error) {
+      console.error('❌ Ошибка сохранения названия:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка сохранения') }
+    }
   }
 
   const cancelTaskEdit = (task) => {
@@ -207,25 +212,25 @@ export function useTasks() {
 
   // Сохранение данных карточки задачи в рамках этапа.
   const saveTaskCard = async (block, task, patch) => {
-    if (!block?.tasks?.length || !task?.id) return { success: false, message: 'Задача не найдена' }
+    if (!block?.id || !task?.id) return { success: false, message: 'Задача не найдена' }
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
     const { startDate, releaseDate } = normalizeTaskDates(patch?.startDate, patch?.releaseDate)
-    const updatedTasks = block.tasks.map((t) => {
-      if (t.id !== task.id) return t
-      const title = String(patch?.title || '').trim()
-      return {
-        ...t,
-        title: title || t.title || 'Новая задача',
+    const title = String(patch?.title || '').trim()
+    try {
+      const response = await axios.patch(apiPath(`/blocks/${block.id}/tasks/${task.id}`), {
+        title: title || task.title || 'Новая задача',
         linkUrl: normalizeLinkUrl(patch?.linkUrl || ''),
         linkNote: String(patch?.linkNote || '').trim(),
         startDate,
         releaseDate,
         effort: Math.max(0, Number(patch?.effort) || 0)
-      }
-    })
-    const updatedBlock = { ...block, tasks: updatedTasks }
-    const result = await updateBlock(updatedBlock)
-    if (result.success) forceUpdatePositions()
-    return result
+      })
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data }
+    } catch (error) {
+      console.error('❌ Ошибка сохранения карточки:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка сохранения') }
+    }
   }
 
   // ===== Drag&Drop задач между/внутри этапов =====
@@ -303,11 +308,10 @@ export function useTasks() {
   // Переставляет задачу в конец текущего этапа.
   const reorderTaskToEndOfBlock = async (block, sourceTask) => {
     if (!block.tasks?.length) return
-    const newTasks = block.tasks.filter(t => t.id !== sourceTask.id)
+    const newTasks = block.tasks.filter((t) => t.id !== sourceTask.id)
     newTasks.push(sourceTask)
     newTasks.forEach((task, idx) => { task.order = idx })
-    const updatedBlock = { ...block, tasks: newTasks }
-    const result = await updateBlock(updatedBlock)
+    const result = await updateBlock({ ...block, tasks: newTasks })
     if (result.success) forceUpdatePositions()
     return result
   }
@@ -316,14 +320,13 @@ export function useTasks() {
   const reorderTaskInsideBlock = async (block, sourceTask, targetTask) => {
     if (!targetTask || sourceTask.id === targetTask.id) return
     const newTasks = [...block.tasks]
-    const sourceIndex = newTasks.findIndex(t => t.id === sourceTask.id)
-    const targetIndex = newTasks.findIndex(t => t.id === targetTask.id)
+    const sourceIndex = newTasks.findIndex((t) => t.id === sourceTask.id)
+    const targetIndex = newTasks.findIndex((t) => t.id === targetTask.id)
     if (sourceIndex === -1 || targetIndex === -1) return
     const [movedTask] = newTasks.splice(sourceIndex, 1)
     newTasks.splice(targetIndex, 0, movedTask)
     newTasks.forEach((task, idx) => { task.order = idx })
-    const updatedBlock = { ...block, tasks: newTasks }
-    const result = await updateBlock(updatedBlock)
+    const result = await updateBlock({ ...block, tasks: newTasks })
     if (result.success) forceUpdatePositions()
     return result
   }
@@ -331,14 +334,14 @@ export function useTasks() {
   // Перенос задачи между этапами с очисткой невалидных зависимостей.
   const moveTaskBetweenBlocks = async (sourceBlock, targetBlock, sourceTask, targetTask) => {
     const sourceTasks = removePredecessorIdFromAllTasks(
-      sourceBlock.tasks.filter(t => t.id !== sourceTask.id),
+      sourceBlock.tasks.filter((t) => t.id !== sourceTask.id),
       sourceTask.id
     )
     const taskToMoveRaw = { ...sourceTask, isEditing: false }
 
     let targetTasks
     if (targetTask) {
-      const targetIndex = targetBlock.tasks.findIndex(t => t.id === targetTask.id)
+      const targetIndex = targetBlock.tasks.findIndex((t) => t.id === targetTask.id)
       targetTasks = [...targetBlock.tasks]
       targetTasks.splice(targetIndex, 0, taskToMoveRaw)
     } else {

@@ -899,12 +899,12 @@ const stageDurationTitle = (block) => {
 }
 
 const stageTimelineStatus = (block) => {
-  const tasks = tasksSorted(block?.tasks)
-  if (!tasks.length) return 'todo'
-  const allDone = tasks.every((t) => t?.status === 'done')
-  if (allDone) return 'done'
-  const hasStarted = tasks.some((t) => t?.status === 'progress' || t?.status === 'done')
-  return hasStarted ? 'progress' : 'todo'
+  if (typeof blocksActions?.stageTimelineStatus === 'function') {
+    return blocksActions.stageTimelineStatus(block)
+  }
+  if (block?.stageStatus === 'done') return 'done'
+  if (block?.stageStatus === 'started') return 'progress'
+  return 'todo'
 }
 
 const stageTimelineFill = (status) => {
@@ -952,10 +952,11 @@ const stageColor = (block) => {
 }
 
 const stageProgressPercent = (block) => {
-  const tasks = tasksSorted(block?.tasks)
-  if (!tasks.length) return 0
-  const doneCount = tasks.filter((t) => t?.status === 'done').length
-  return Math.round((doneCount / tasks.length) * 100)
+  if (typeof blocksActions?.stageProgressPercent === 'function') {
+    return blocksActions.stageProgressPercent(block)
+  }
+  const n = Number(block?.progressPercent)
+  return Number.isFinite(n) ? n : 0
 }
 
 // Task modal

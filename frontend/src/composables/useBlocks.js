@@ -65,9 +65,17 @@ export function useBlocks() {
       const response = await axios.get(apiPath('/blocks'), {
         params: { projectId: activeProjectId.value }
       })
-      blocks.value = response.data.map((b) => ({
+      const payload = response.data
+      const list = Array.isArray(payload)
+        ? payload
+        : (Array.isArray(payload?.blocks) ? payload.blocks : [])
+      blocks.value = list.map((b) => ({
         ...b,
-        tasks: normalizeTasksArray(b.tasks)
+        tasks: normalizeTasksArray(b.tasks),
+        stagePredecessorIds: Array.isArray(b.stagePredecessorIds) ? b.stagePredecessorIds : [],
+        stageDependencies: Array.isArray(b.stageDependencies) ? b.stageDependencies : [],
+        completed: b.stageStatus === 'done' || Boolean(b.completed),
+        isOverdue: Boolean(b.isOverdue)
       }))
       console.log('✅ Блоки загружены:', blocks.value.length)
       return { success: true, blocks: blocks.value }
@@ -95,43 +103,14 @@ export function useBlocks() {
   }
 
   try {
-    let startDate, releaseDate
-    
-    if (blocks.value.length > 0) {
-      const sortedByEnd = [...blocks.value].sort((a, b) => new Date(b.releaseDate) - new Date(a.releaseDate))
-      const lastBlock = sortedByEnd[0]
-      const lastEndDate = new Date(lastBlock.releaseDate)
-      
-      startDate = lastEndDate.toISOString().split('T')[0]
-      const newEndDate = new Date(lastEndDate)
-      newEndDate.setMonth(lastEndDate.getMonth() + 1)
-      releaseDate = newEndDate.toISOString().split('T')[0]
-    } else {
-      const today = new Date()
-      const firstStart = new Date(today.getFullYear(), today.getMonth(), 1)
-      const firstEnd = new Date(firstStart)
-      firstEnd.setMonth(firstStart.getMonth() + 1)
-      firstEnd.setDate(firstEnd.getDate() - 1)
-      
-      startDate = firstStart.toISOString().split('T')[0]
-      releaseDate = firstEnd.toISOString().split('T')[0]
-    }
-    
-    const newBlock = {
-      title: `Новый этап ${new Date().toLocaleString()}`,
-      description: '',
-      startDate: startDate,
-      releaseDate: releaseDate,
-      effort: 40,
-      completed: false,
-      tasks: [],
+    const response = await axios.post(apiPath('/blocks'), {
       projectId: activeProjectId.value
-    }
-    
-    const response = await axios.post(apiPath('/blocks'), newBlock)
+    })
     blocks.value.push({
       ...response.data,
-      tasks: normalizeTasksArray(response.data.tasks)
+      tasks: normalizeTasksArray(response.data.tasks),
+      stagePredecessorIds: Array.isArray(response.data.stagePredecessorIds) ? response.data.stagePredecessorIds : [],
+      stageDependencies: Array.isArray(response.data.stageDependencies) ? response.data.stageDependencies : []
     })
     
     // ВАЖНО: принудительно обновляем позиции блоков
@@ -161,30 +140,60 @@ export function useBlocks() {
         }
       }
 
-  // Обновляет этап на сервере и синхронизирует локальный state.
+  const stageFieldsFrom = (blockLike) => ({
+    title: blockLike?.title,
+    description: blockLike?.description,
+    startDate: blockLike?.startDate,
+    releaseDate: blockLike?.releaseDate,
+    effort: blockLike?.effort,
+    completed: blockLike?.completed,
+    projectId: blockLike?.projectId
+  })
+
+  const applyBlockFromApi = (apiBlock, extras = {}) => {
+    if (!apiBlock?.id) return null
+    const index = blocks.value.findIndex((b) => b.id === apiBlock.id)
+    const prev = index !== -1 ? blocks.value[index] : null
+    const merged = {
+      ...apiBlock,
+      tasks: normalizeTasksArray(apiBlock.tasks),
+      completed: apiBlock.stageStatus === 'done',
+      isOverdue: Boolean(apiBlock.isOverdue),
+      stagePredecessorIds: Array.isArray(apiBlock.stagePredecessorIds)
+        ? apiBlock.stagePredecessorIds
+        : (extras.stagePredecessorIds ?? prev?.stagePredecessorIds ?? []),
+      stageDependencies: Array.isArray(apiBlock.stageDependencies)
+        ? apiBlock.stageDependencies
+        : (extras.stageDependencies ?? prev?.stageDependencies ?? []),
+      stageDependencyMeta: apiBlock.stageDependencyMeta ?? extras.stageDependencyMeta ?? prev?.stageDependencyMeta ?? null
+    }
+    if (index !== -1) {
+      if (belongsToActiveProject(merged)) {
+        blocks.value[index] = merged
+      } else {
+        blocks.value.splice(index, 1)
+      }
+    }
+    return merged
+  }
+
+  // Поля этапа — PUT /blocks. Массив задач — PUT /blocks/:id/tasks в таблицы.
   const updateBlock = async (block) => {
     try {
       if (isReadOnly.value) {
         return { success: false, message: 'Режим только просмотра' }
       }
-      const response = await putWithRetry(apiPath(`/blocks/${block.id}`), block)
-      const index = blocks.value.findIndex(b => b.id === block.id)
-      const prev = index !== -1 ? blocks.value[index] : null
-      const merged = {
-        ...response.data,
-        tasks: normalizeTasksArray(response.data.tasks),
-        // Локальные расширения модели этапа (могут не приходить из API в response.data).
-        stagePredecessorIds: response.data.stagePredecessorIds ?? block.stagePredecessorIds ?? prev?.stagePredecessorIds ?? [],
-        stageDependencyMeta: response.data.stageDependencyMeta ?? block.stageDependencyMeta ?? prev?.stageDependencyMeta ?? null
+      const extras = {
+        stagePredecessorIds: block.stagePredecessorIds,
+        stageDependencyMeta: block.stageDependencyMeta
       }
-      if (index !== -1) {
-        if (belongsToActiveProject(merged)) {
-          blocks.value[index] = merged
-        } else {
-          // Этап перенесён в другой проект — сразу убираем его из текущего списка.
-          blocks.value.splice(index, 1)
-        }
+      const stageRes = await putWithRetry(apiPath(`/blocks/${block.id}`), stageFieldsFrom(block))
+      let apiBlock = stageRes.data
+      if (Array.isArray(block.tasks)) {
+        const tasksRes = await putWithRetry(apiPath(`/blocks/${block.id}/tasks`), { tasks: block.tasks })
+        apiBlock = tasksRes.data
       }
+      const merged = applyBlockFromApi(apiBlock, extras)
       return { success: true, block: merged }
     } catch (error) {
       console.error('Ошибка обновления:', error)
@@ -195,8 +204,36 @@ export function useBlocks() {
     }
   }
 
+  const updateStageDependencies = async (blockId, deps) => {
+    try {
+      if (isReadOnly.value) {
+        return { success: false, message: 'Режим только просмотра' }
+      }
+      const response = await putWithRetry(apiPath(`/blocks/${blockId}/stage-deps`), { deps })
+      const merged = applyBlockFromApi(response.data)
+      return { success: true, block: merged }
+    } catch (error) {
+      console.error('Ошибка связей этапов:', error)
+      if (isTransientNetworkError(error)) {
+        return { success: false, message: 'Сеть нестабильна. Попробуйте ещё раз.' }
+      }
+      return { success: false, message: error.response?.data?.error || 'Ошибка сохранения связей этапов' }
+    }
+  }
 
-
+  const patchStageDepLabel = async (blockId, predecessorId, label) => {
+    try {
+      if (isReadOnly.value) {
+        return { success: false, message: 'Режим только просмотра' }
+      }
+      const response = await axios.patch(apiPath(`/blocks/${blockId}/stage-deps/${predecessorId}`), label)
+      const merged = applyBlockFromApi(response.data)
+      return { success: true, block: merged }
+    } catch (error) {
+      console.error('Ошибка подписи связи этапов:', error)
+      return { success: false, message: error.response?.data?.error || 'Ошибка сохранения подписи' }
+    }
+  }
 
   // Частичное обновление только даты релиза этапа.
   const updateBlockDate = async (block, newDate) => {
@@ -205,22 +242,11 @@ export function useBlocks() {
         return { success: false, error: new Error('read-only') }
       }
       const updatedBlock = { ...block, releaseDate: newDate }
-      const response = await axios.put(apiPath(`/blocks/${block.id}`), updatedBlock)
-      const index = blocks.value.findIndex(b => b.id === block.id)
-      const prev = index !== -1 ? blocks.value[index] : null
-      const merged = {
-        ...response.data,
-        tasks: normalizeTasksArray(response.data.tasks),
-        stagePredecessorIds: response.data.stagePredecessorIds ?? updatedBlock.stagePredecessorIds ?? prev?.stagePredecessorIds ?? [],
-        stageDependencyMeta: response.data.stageDependencyMeta ?? updatedBlock.stageDependencyMeta ?? prev?.stageDependencyMeta ?? null
-      }
-      if (index !== -1) {
-        if (belongsToActiveProject(merged)) {
-          blocks.value[index] = merged
-        } else {
-          blocks.value.splice(index, 1)
-        }
-      }
+      const response = await axios.put(apiPath(`/blocks/${block.id}`), stageFieldsFrom(updatedBlock))
+      const merged = applyBlockFromApi(response.data, {
+        stagePredecessorIds: updatedBlock.stagePredecessorIds,
+        stageDependencyMeta: updatedBlock.stageDependencyMeta
+      })
       forceUpdatePositions()
       return { success: true, block: merged }
     } catch (error) {
@@ -248,77 +274,76 @@ const forceUpdatePositions = () => {
   }, 50)
 }
 
-  // Агрегаты для статистики в шапке/виджетах.
-  const completedReleasesCount = computed(() => {
-    return blocks.value.filter(block => {
-      if (!block.tasks || block.tasks.length === 0) return false
-      return block.tasks.every(task => task.status === 'done')
-    }).length
-  })
+  // Агрегаты шапки — те же формулы, что v_project_stats, по computed-полям API.
+  const blockTasksTotal = (block) => {
+    const n = Number(block?.taskCounts?.total)
+    return Number.isFinite(n) ? n : (block?.tasks?.length || 0)
+  }
+  const blockTasksDone = (block) => {
+    const n = Number(block?.taskCounts?.done)
+    return Number.isFinite(n) ? n : (block?.tasks || []).filter((t) => t.status === 'done').length
+  }
 
-  const inProgressReleasesCount = computed(() => {
-    return blocks.value.filter(block => {
-      if (!block.tasks || block.tasks.length === 0) return false
-      const hasProgress = block.tasks.some(task => task.status === 'progress')
-      const hasTodo = block.tasks.some(task => task.status === 'todo')
-      return hasProgress || hasTodo
-    }).length
-  })
+  const completedReleasesCount = computed(() =>
+    blocks.value.filter((block) => block.stageStatus === 'done').length
+  )
 
-  const totalTasksCount = computed(() => {
-    return blocks.value.reduce((sum, block) => sum + (block.tasks?.length || 0), 0)
-  })
+  const inProgressReleasesCount = computed(() =>
+    blocks.value.filter((block) => blockTasksTotal(block) > 0 && block.stageStatus !== 'done').length
+  )
 
-  const completedTasksCount = computed(() => {
-    return blocks.value.reduce((sum, block) => {
-      if (!block.tasks) return sum
-      return sum + block.tasks.filter(task => task.status === 'done').length
-    }, 0)
-  })
+  const totalTasksCount = computed(() =>
+    blocks.value.reduce((sum, block) => sum + blockTasksTotal(block), 0)
+  )
+
+  const completedTasksCount = computed(() =>
+    blocks.value.reduce((sum, block) => sum + blockTasksDone(block), 0)
+  )
 
   const overallProgress = computed(() => {
     if (totalTasksCount.value === 0) return 0
     return Math.round((completedTasksCount.value / totalTasksCount.value) * 100)
   })
 
-  // Тепловая карта: суммарные трудозатраты (по полю block.effort)
-  const totalEffort = computed(() => {
-    return blocks.value.reduce((sum, block) => sum + (block.effort || 0), 0)
-  })
+  const totalEffort = computed(() =>
+    blocks.value.reduce((sum, block) => sum + (Number(block.effort) || 0), 0)
+  )
 
-  const completedEffort = computed(() => {
-    return blocks.value.reduce((sum, block) => {
-      if (!block.tasks || block.tasks.length === 0) return sum
-      const allDone = block.tasks.every(task => task.status === 'done')
-      return allDone ? sum + (block.effort || 0) : sum
-    }, 0)
-  })
+  const completedEffort = computed(() =>
+    blocks.value.reduce((sum, block) => (
+      block.stageStatus === 'done' ? sum + (Number(block.effort) || 0) : sum
+    ), 0)
+  )
 
   const completedEffortPercent = computed(() => {
     if (totalEffort.value === 0) return 0
     return Math.round((completedEffort.value / totalEffort.value) * 100)
   })
 
-  // Утилиты прогресса этапов/задач.
+  // Утилиты прогресса этапов/задач. Если API уже отдал computed — берём его.
   const getTaskProgress = (block) => {
+    if (Number.isFinite(Number(block?.progressPercent))) return Number(block.progressPercent)
     if (!block.tasks || block.tasks.length === 0) return 0
     const completedTasks = block.tasks.filter(task => task.status === 'done').length
     return Math.round((completedTasks / block.tasks.length) * 100)
   }
 
   const getCompletedTasksCount = (block) => {
+    if (Number.isFinite(Number(block?.taskCounts?.done))) return Number(block.taskCounts.done)
     if (!block.tasks) return 0
     return block.tasks.filter(task => task.status === 'done').length
   }
 
   /** Есть ли у этапа хотя бы одна задача в статусе «в работе». */
   const blockHasTaskInProgress = (block) => {
+    if (Number.isFinite(Number(block?.taskCounts?.progress))) return Number(block.taskCounts.progress) > 0
     if (!block?.tasks?.length) return false
     return block.tasks.some((t) => t.status === 'progress')
   }
 
   /** Этап начат (есть выполненные или в работе), но не завершён полностью. */
   const blockIsStarted = (block) => {
+    if (block?.stageStatus) return block.stageStatus === 'started'
     if (!block?.tasks?.length) return false
     const allDone = block.tasks.every((task) => task.status === 'done')
     if (allDone) return false
@@ -327,11 +352,20 @@ const forceUpdatePositions = () => {
 
   // Цвета карточки этапа (как у полосы Ганта: done / active / idle).
   const getBlockBackgroundColor = (block) => {
-    if (!block.tasks || block.tasks.length === 0) return '#C0C0C0'
-    const allTasksDone = block.tasks.every((task) => task.status === 'done')
-    if (allTasksDone) return '#90EE90'
-    if (blockIsStarted(block)) return '#87CEEB'
+    if (block?.stageStatus === 'done' || block?.completed) return '#90EE90'
+    if (block?.stageStatus === 'started' || blockIsStarted(block)) return '#87CEEB'
     return '#C0C0C0'
+  }
+
+  const stageProgressPercent = (block) => {
+    if (Number.isFinite(Number(block?.progressPercent))) return Number(block.progressPercent)
+    return 0
+  }
+
+  const stageTimelineStatus = (block) => {
+    if (block?.stageStatus === 'done') return 'done'
+    if (block?.stageStatus === 'started') return 'progress'
+    return 'todo'
   }
 
   const getEffortColor = (effort, opacity = 1) => {
@@ -392,6 +426,9 @@ const forceUpdatePositions = () => {
   loadBlocks,
   createNewBlock,
   updateBlock,
+  updateStageDependencies,
+  patchStageDepLabel,
+  applyBlockFromApi,
   deleteBlock,
   updateBlockDate,
   forceUpdatePositions,
@@ -404,6 +441,8 @@ const forceUpdatePositions = () => {
     completedEffort,
     completedEffortPercent,
   getTaskProgress,
+  stageProgressPercent,
+  stageTimelineStatus,
   getCompletedTasksCount,
   blockHasTaskInProgress,
   getBlockBackgroundColor,

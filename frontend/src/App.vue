@@ -119,6 +119,8 @@ const {
   updateBlock,
   deleteBlock,
   getTaskProgress,
+  stageProgressPercent,
+  stageTimelineStatus,
   getCompletedTasksCount,
   calculateBlockHeight,
   getBlockBackgroundColor,
@@ -175,6 +177,8 @@ provide('blocksActions', {
   forceUpdatePositions,
   deleteBlock,
   getTaskProgress,
+  stageProgressPercent,
+  stageTimelineStatus,
   getCompletedTasksCount,
   calculateBlockHeight,
   getBlockBackgroundColor,
@@ -434,22 +438,6 @@ const taskStatusLabel = (status) => {
     default:
       return 'не начата'
   }
-}
-
-const stageProgressPercent = (block) => {
-  const tasks = Array.isArray(block?.tasks) ? block.tasks : []
-  if (!tasks.length) return 0
-  const doneCount = tasks.filter((task) => task?.status === 'done').length
-  return Math.round((doneCount / tasks.length) * 100)
-}
-
-const stageTimelineStatus = (block) => {
-  const tasks = Array.isArray(block?.tasks) ? block.tasks : []
-  if (!tasks.length) return 'todo'
-  const allDone = tasks.every((task) => task?.status === 'done')
-  if (allDone) return 'done'
-  const hasStarted = tasks.some((task) => task?.status === 'progress' || task?.status === 'done')
-  return hasStarted ? 'progress' : 'todo'
 }
 
 const statusFillColor = (status) => {

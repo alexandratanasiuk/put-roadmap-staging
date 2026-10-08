@@ -98,6 +98,7 @@ export function useGantt(options = {}) {
 
   // Статусные helpers (overdue/risk/on-track) для боковой панели и подсветки.
   const isOverdue = (block) => {
+    if (typeof block?.isOverdue === 'boolean') return block.isOverdue
     if (!block.releaseDate) return false
     const releaseDate = new Date(block.releaseDate)
     return releaseDate < new Date() && getTaskProgress(block) < 100
