@@ -48,7 +48,7 @@
             @task-drag-enter="onTaskDragEnter"
             @task-drag-leave="onTaskDragLeave"
             @start-edit-date="startEditingDate(block)"
-            @save-date="saveDate(block)"
+            @save-date="(dates) => saveDate(block, dates)"
             @cancel-edit-date="cancelDateEdit(block)"
           />
         </div>
@@ -107,7 +107,7 @@ const { showNotificationMessage } = useNotification()
 
 const BASE_YEAR = 2026
 const QUARTER_WIDTH = 360
-const QUARTER_TASK_EXTRA_HEIGHT = 18
+const QUARTER_TASK_EXTRA_HEIGHT = 6
 
 const timelineWrapper = ref(null)
 const quartersHeader = ref(null)
@@ -283,24 +283,35 @@ const getVisibleQuarterBlockStyle = (block) => {
 
 const startEditingDate = (block) => {
   block.editingDate = true
-  block.editDateValue = block.releaseDate
 }
 
-const saveDate = async (block) => {
-  if (!block.editDateValue) return
-  const result = await updateBlockDate(block, block.editDateValue)
+const saveDate = async (block, dates) => {
+  const startDate = dates?.startDate ?? block.startDate
+  const releaseDate = dates?.releaseDate ?? block.releaseDate
+  const keepOpen = Boolean(dates?.keepOpen)
+  if (!startDate && !releaseDate) {
+    cancelDateEdit(block)
+    return
+  }
+  if (startDate === (block.startDate || '') && releaseDate === (block.releaseDate || '')) {
+    if (!keepOpen) cancelDateEdit(block)
+    return
+  }
+  const result = await updateBlockDate(block, {
+    startDate,
+    releaseDate,
+    changedField: dates?.changedField
+  })
   if (result.success) {
-    block.editingDate = false
-    delete block.editDateValue
-    showNotificationMessage('✅ Дата обновлена', 'success')
+    if (!keepOpen) block.editingDate = false
+    showNotificationMessage('✅ Даты этапа обновлены', 'success')
   } else {
-    showNotificationMessage('❌ Ошибка обновления даты', 'error')
+    showNotificationMessage('❌ Ошибка обновления дат', 'error')
   }
 }
 
 const cancelDateEdit = (block) => {
   block.editingDate = false
-  delete block.editDateValue
 }
 
 const onTimelineScroll = () => {

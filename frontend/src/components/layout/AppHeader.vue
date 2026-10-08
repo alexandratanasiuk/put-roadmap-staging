@@ -6,15 +6,18 @@
           <h1>
             <img :src="roadmapIcon" alt="" class="logo-icon">
             <span>Дорожная карта проекта:</span>
-            <button
+            <Tooltip
               v-if="isAuthenticated"
-              class="active-project-toggle"
-              type="button"
-              :title="projectMenuOpen ? 'Скрыть меню проекта' : 'Показать меню проекта'"
-              @click="toggleProjectMenu"
+              :label="projectMenuOpen ? 'Скрыть меню проекта' : 'Показать меню проекта'"
             >
-              "{{ activeProject?.name || 'Без проекта' }}"
-            </button>
+              <button
+                class="active-project-toggle"
+                type="button"
+                @click="toggleProjectMenu"
+              >
+                "{{ activeProject?.name || 'Без проекта' }}"
+              </button>
+            </Tooltip>
             <strong v-else class="active-project-name">"{{ activeProject?.name || 'Без проекта' }}"</strong>
           </h1>
           <div v-if="isAuthenticated && projectMenuOpen" class="project-switcher project-switcher-popover">
@@ -43,41 +46,52 @@
       </div>
       <div v-if="isAuthenticated" class="header-top-actions">
         <div class="header-radio-controls">
-          <select
-            v-model="headerRadioSelectedUrl"
-            class="header-radio-select"
-            title="Радиостанция"
-            @change="onHeaderRadioStationChange"
-          >
-            <option v-for="station in RADIO_STATIONS" :key="station.name" :value="station.url">
-              {{ station.name }}
-            </option>
-          </select>
-          <button
-            class="btn btn-small header-radio-btn"
-            type="button"
-            :title="headerRadioError || (headerRadioPlaying ? 'Пауза' : 'Старт')"
-            @click="toggleHeaderRadioPlayback"
-          >
-            {{ headerRadioPlaying ? '⏸ Пауза' : '▶ Старт' }}
-          </button>
-          <div class="header-radio-volume-wrap" title="Громкость радио">
-            <span class="header-radio-volume-icon">🔊</span>
-            <input
-              v-model.number="headerRadioVolume"
-              class="header-radio-volume"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              @input="onHeaderRadioVolumeChange"
+          <Tooltip label="Радиостанция">
+            <select
+              v-model="headerRadioSelectedUrl"
+              class="header-radio-select"
+              aria-label="Радиостанция"
+              @change="onHeaderRadioStationChange"
             >
-          </div>
+              <option v-for="station in RADIO_STATIONS" :key="station.name" :value="station.url">
+                {{ station.name }}
+              </option>
+            </select>
+          </Tooltip>
+          <Tooltip :label="headerRadioError || (headerRadioPlaying ? 'Пауза' : 'Старт')">
+            <button
+              class="btn btn-small header-radio-btn"
+              type="button"
+              :aria-label="headerRadioError || (headerRadioPlaying ? 'Пауза' : 'Старт')"
+              @click="toggleHeaderRadioPlayback"
+            >
+              {{ headerRadioPlaying ? '⏸ Пауза' : '▶ Старт' }}
+            </button>
+          </Tooltip>
+          <Tooltip label="Громкость радио">
+            <div class="header-radio-volume-wrap">
+              <span class="header-radio-volume-icon">🔊</span>
+              <input
+                v-model.number="headerRadioVolume"
+                class="header-radio-volume"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                aria-label="Громкость радио"
+                @input="onHeaderRadioVolumeChange"
+              >
+            </div>
+          </Tooltip>
         </div>
-        <span v-if="isReadOnly" class="read-only-badge" title="Доступен только просмотр">👁 Просмотр</span>
-        <button class="btn btn-small" @click="handleLogout" title="Выйти">
-          👋 Выйти ({{ loginUsername }})
-        </button>
+        <Tooltip v-if="isReadOnly" label="Доступен только просмотр">
+          <span class="read-only-badge">👁 Просмотр</span>
+        </Tooltip>
+        <Tooltip label="Выйти">
+          <button class="btn btn-small" @click="handleLogout">
+            👋 Выйти ({{ loginUsername }})
+          </button>
+        </Tooltip>
       </div>
     </div>
 
@@ -257,6 +271,7 @@ import { useAuth } from '@/composables/useAuth'
 import { useViewMode } from '@/composables/useViewMode'
 import { useBlocks } from '@/composables/useBlocks'
 import { STAGING_ARCHITECT_USERNAME } from '@/config/stagingFlags'
+import Tooltip from '@/components/common/Tooltip.vue'
 import roadmapIcon from '@/assets/project-header-icon-blue.svg'
 import ganttIcon from '@/assets/gantt-icon.png'
 import workspaceIcon from '@/assets/workspace-icon.svg'

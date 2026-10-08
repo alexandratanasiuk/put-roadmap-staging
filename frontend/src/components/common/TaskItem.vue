@@ -3,29 +3,31 @@
     class="task-item"
     :class="{
       'task-done': task.status === 'done',
-      'task-progress': task.status === 'progress',
+      'is-in-progress': task.status === 'progress',
       'drag-over': dragOver,
       'dragging': dragging,
       'task-readonly': readOnly
     }"
+    :draggable="!readOnly && !task.isEditing"
+    @dragstart="onDragStart"
+    @dragend="onDragEnd"
     @dragover="onDragOver"
     @drop="onDrop"
     @dragenter="onDragEnter"
     @dragleave="onDragLeave"
   >
-    <div
-      class="task-status"
-      :class="{ 'is-disabled': readOnly }"
-      :draggable="!readOnly"
-      @dragstart.stop="onDragStart"
-      @dragend.stop="onDragEnd"
-      @click.stop="cycleStatus"
-      :title="readOnly ? 'Только просмотр' : getStatusTitle(task.status)"
-    >
-      <span class="status-icon" :style="{ color: getStatusColor(task.status) }">
-        {{ getStatusIcon(task.status) }}
-      </span>
-    </div>
+    <Tooltip :label="readOnly ? 'Только просмотр' : getStatusTitle(task.status)">
+      <button
+        type="button"
+        class="task-status"
+        :class="[`task-status_${normalizedStatus}`, { 'is-disabled': readOnly }]"
+        :draggable="!readOnly && !task.isEditing"
+        @dragstart.stop="onDragStart"
+        @dragend.stop="onDragEnd"
+        @click.stop="cycleStatus"
+        :aria-label="getStatusTitle(task.status)"
+      ></button>
+    </Tooltip>
 
     <div class="task-content">
       <div v-if="task.isEditing" class="task-edit-mode">
@@ -39,29 +41,37 @@
           rows="2"
         ></textarea>
       </div>
-      <div v-else class="task-title" :class="{ 'is-readonly': readOnly }" @click.stop="onTaskTitleClick">
-        {{ task.title }}
-      </div>
+      <Tooltip v-else :label="task.title" fill>
+        <div
+          class="task-title"
+          :class="{ 'is-readonly': readOnly }"
+          @click.stop="onTaskTitleClick"
+        >
+          {{ task.title }}
+        </div>
+      </Tooltip>
     </div>
 
     <div v-if="!readOnly && !task.isEditing" class="task-actions">
-      <button
-        v-if="hasLink()"
-        class="task-link-btn"
-        type="button"
-        title="Открыть ссылку"
-        aria-label="Открыть ссылку задачи"
-        @click.stop="openTaskLink"
-      >
-        <img class="task-link-icon" :src="linkIcon" alt="" />
-      </button>
+      <Tooltip v-if="hasLink()" label="Открыть ссылку">
+        <button
+          class="task-link-btn"
+          type="button"
+          aria-label="Открыть ссылку задачи"
+          @click.stop="openTaskLink"
+          @dragstart.stop.prevent
+        >
+          <img class="task-link-icon" :src="linkIcon" alt="" />
+        </button>
+      </Tooltip>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import linkIcon from '@/assets/link-icon.png'
+import Tooltip from './Tooltip.vue'
 
 // Входные данные одной строки задачи + флаги DnD/режима просмотра.
 const props = defineProps({
@@ -88,22 +98,11 @@ const emit = defineEmits([
   'drag-leave'
 ])
 
-// Локальное отображение статусов (иконка/цвет/подсказка) для компактности рендера.
-const getStatusIcon = (status) => {
-  switch(status) {
-    case 'done': return '✅'
-    case 'progress': return '🕛'
-    default: return '○'
-  }
-}
-
-const getStatusColor = (status) => {
-  switch(status) {
-    case 'done': return '#90EE90'
-    case 'progress': return '#eab308'
-    default: return '#deddd1'
-  }
-}
+const normalizedStatus = computed(() => {
+  if (props.task?.status === 'done') return 'done'
+  if (props.task?.status === 'progress') return 'progress'
+  return 'todo'
+})
 
 const getStatusTitle = (status) => {
   switch(status) {
@@ -224,114 +223,123 @@ const onDragLeave = (event) => {
 <style scoped>
 .task-item {
   display: flex;
-  align-items: stretch;
-  gap: 6px;
-  padding: 6px 0;
-  border-bottom: 1px solid #e2e8f0;
-  transition: background-color 0.2s ease, border-color 0.2s ease;
-  cursor: default;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: grab;
   user-select: none;
+  min-width: 0;
 }
+.task-item:active { cursor: grabbing; }
+.task-item.task-readonly { cursor: default; }
 .task-item.dragging {
   opacity: 0.5;
-  transform: scale(0.98);
-  background: white;
-  z-index: 1000;
 }
 .task-item.drag-over {
-  border-bottom-color: #bfdbfe;
-  background: #f8fbff;
+  background: rgba(59, 130, 246, 0.08);
   box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.28);
   border-radius: 6px;
 }
 .task-status {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
+  box-sizing: border-box;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid #94a3b8;
+  border-radius: 50%;
+  background: transparent;
+  appearance: none;
   cursor: grab;
-  border-radius: 12px;
 }
 .task-status:active { cursor: grabbing; }
-.task-status.is-disabled {
-  cursor: default;
+.task-status.is-disabled { cursor: default; }
+.task-status_progress {
+  border-color: #3b82f6;
+  background: #3b82f6;
+  box-shadow: inset 0 0 0 3px #fff;
 }
-.task-status:hover { background: #f1f5f9; transform: scale(1.1); }
-.status-icon {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
-  font-size: 1rem;
-  line-height: 20px;
-  text-align: center;
+.task-status_done {
+  border-color: #22c55e;
+  background: #22c55e;
+  position: relative;
 }
-.task-content { flex: 1; min-width: 0; padding-top: 2px; }
+.task-status_done::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.task-content {
+  flex: 1;
+  min-width: 0;
+}
 .task-edit-mode {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
 }
 .task-title {
-  font-size: 0.9rem;
-  line-height: 1.2;
-  color: #1e293b;
-  word-break: break-word;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
 }
-.task-title:hover { background: #e2e8f0; outline: 1px solid #3b82f6; }
+.task-title:hover { color: #1d4ed8; }
 .task-actions {
   display: flex;
   align-items: center;
-  gap: 3px;
   flex-shrink: 0;
-  align-self: stretch;
-  height: 100%;
-  transform: translateX(-6px);
-  opacity: 1;
-  transition: opacity 0.2s;
 }
 .task-link-btn {
-  height: 80%;
-  width: auto;
-  aspect-ratio: 1 / 1;
-  min-height: 20px;
-  max-height: 30px;
+  width: 20px;
+  height: 20px;
   border: none;
   background: transparent;
   cursor: pointer;
-  border-radius: 5px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
 }
 .task-link-btn:hover {
-  background: #eff6ff;
+  background: rgba(37, 99, 235, 0.08);
 }
 .task-link-icon {
-  width: 100%;
-  height: 100%;
+  width: 16px;
+  height: 16px;
   display: block;
 }
 .task-edit-input {
   width: 100%;
-  max-width: 100%;
   box-sizing: border-box;
-  padding: 6px 8px;
+  padding: 4px 6px;
   border: 1px solid #3b82f6;
   border-radius: 6px;
   font-size: 0.75rem;
   outline: none;
   background: white;
   resize: none;
-  min-height: 40px;
-  height: 40px;
+  min-height: 32px;
+  height: 32px;
   font-family: inherit;
 }
 </style>

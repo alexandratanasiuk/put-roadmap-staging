@@ -21,42 +21,59 @@
               class="horizontal-trailing-month-wrap"
               :style="trailingMonthButtonStyleInCell(month)"
             >
-              <button
+              <Tooltip
                 v-if="trailingMonthControl.showExtend"
-                type="button"
-                class="horizontal-trailing-month-btn"
-                title="Показать следующий пустой месяц"
-                aria-label="Показать следующий пустой месяц"
-                @click.stop.prevent="extendTrailingEmptyMonth"
+                label="Показать следующий пустой месяц"
+                position="bottom"
               >
-                ▸
-              </button>
-              <button
+                <button
+                  type="button"
+                  class="horizontal-trailing-month-btn"
+                  aria-label="Показать следующий пустой месяц"
+                  @click.stop.prevent="extendTrailingEmptyMonth"
+                >
+                  ▸
+                </button>
+              </Tooltip>
+              <Tooltip
                 v-else
-                type="button"
-                class="horizontal-trailing-month-btn horizontal-trailing-month-btn--collapse"
-                title="Скрыть пустой месяц"
-                aria-label="Скрыть пустой месяц"
-                @click.stop.prevent="collapseTrailingEmptyMonth"
+                label="Скрыть пустой месяц"
+                position="bottom"
               >
-                ‹
-              </button>
+                <button
+                  type="button"
+                  class="horizontal-trailing-month-btn horizontal-trailing-month-btn--collapse"
+                  aria-label="Скрыть пустой месяц"
+                  @click.stop.prevent="collapseTrailingEmptyMonth"
+                >
+                  ‹
+                </button>
+              </Tooltip>
             </div>
-            <div
+            <Tooltip
               class="horizontal-month-resize-handle"
-              title="Потяните для изменения ширины месяца"
-              @pointerenter="onResizeHandleEnter"
-              @pointerleave="onResizeHandleLeave"
-              @pointerdown.stop.prevent="onMonthResizePointerDown($event, month)"
-            />
+              label="Потяните для изменения ширины месяца"
+              position="bottom"
+            >
+              <span
+                class="horizontal-month-resize-hit"
+                @pointerenter="onResizeHandleEnter"
+                @pointerleave="onResizeHandleLeave"
+                @pointerdown.stop.prevent="onMonthResizePointerDown($event, month)"
+              />
+            </Tooltip>
           </div>
         </div>
       </div>
-      <button
+      <Tooltip
         v-if="hasCustomMonthWidth"
+        class="horizontal-reset-width-wrap"
+        label="Сбросить ширину месяцев"
+        position="bottom"
+      >
+      <button
         type="button"
         class="horizontal-reset-width-btn"
-        title="Сбросить ширину месяцев"
         aria-label="Сбросить ширину месяцев"
         @click.stop.prevent="onResetMonthWidths"
       >
@@ -65,6 +82,7 @@
           <path d="M3 4h5v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </button>
+      </Tooltip>
     </div>
 
     <!-- Основной контент с прокруткой -->
@@ -72,8 +90,6 @@
       class="timeline-wrapper" 
       ref="timelineWrapper" 
       @scroll="onTimelineScroll"
-      @dragover="onGridDragOver"
-      @drop="onGridDrop"
     >
       <div class="timeline-container" :style="{ width: visibleHorizontalTotalWidth + 'px' }">
         <div 
@@ -95,7 +111,6 @@
             :key="'month-start-'+month.index"
             class="horizontal-month-line month-start"
             :style="{ left: month.visibleStartX + 'px' }"
-            :title="'Начало ' + month.label"
           ></div>
 
           <!-- Линии конца каждого месяца (включая правый край последнего видимого) -->
@@ -104,7 +119,6 @@
             :key="'month-end-'+month.index"
             class="horizontal-month-line month-end"
             :style="{ left: month.visibleEndX + 'px' }"
-            :title="'Конец ' + month.label"
           ></div>
 
           <!-- Полоса сегодняшнего дня -->
@@ -142,40 +156,9 @@
             @block-drag-start="onBlockDragStart"
             @block-drag-end="onBlockDragEnd"
             @start-edit-date="startEditingDate(block)"
-            @save-date="saveDate(block)"
+            @save-date="(dates) => saveDate(block, dates)"
             @cancel-edit-date="cancelDateEdit(block)"
           />
-
-          <!-- Слой с линиями для Drag & Drop -->
-          <div class="lines-layer">
-            <div 
-              v-for="block in sortedBlocks" 
-              :key="'line-'+block.id"
-              class="timeline-line"
-              :class="{ 'line-dragging-active': isDraggingLine && draggedLineBlock?.id === block.id }"
-              :data-date="formatDate(block.releaseDate)"
-              :data-block-id="block.id"
-              :style="{ 
-                left: (isDraggingLine && draggedLineBlock?.id === block.id) ? dragCurrentX + 'px' : getVisibleLinePosition(block) + 'px',
-                top: '-30px',
-                height: (getVisibleBlockTop(block) + 10) + 'px'
-              }"
-              draggable="true"
-              @dragstart="onLineDragStart($event, block)"
-              @dragend="onLineDragEnd"
-            >
-              <span class="line-dot"></span>
-              <span 
-                class="line-date"
-                :class="{ 'line-date-dragging': isDraggingLine && draggedLineBlock?.id === block.id }"
-                draggable="true"
-                @dragstart="onLineDragStart($event, block)"
-                @dragend="onLineDragEnd"
-              >
-                {{ (isDraggingLine && draggedLineBlock?.id === block.id) ? previewDate : formatDate(block.releaseDate) }}
-              </span>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -194,13 +177,13 @@
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useDates } from '@/composables/useDates'
 import { useTasks } from '@/composables/useTasks'
-import { useDragLines } from '@/composables/useDragLines'
 import { useNotification } from '@/composables/useNotification'
 import BlockCard from '@/components/common/Block.vue'
 import TaskCardModal from '@/components/common/TaskCardModal.vue'
+import Tooltip from '@/components/common/Tooltip.vue'
 import { layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
 
-// Экран "По месяцам": месячная шкала с ресайзом, линиями сроков и DnD этапов/задач.
+// Экран "По месяцам": месячная шкала с ресайзом и DnD этапов/задач.
 // Получаем данные от родителя через inject
 const blocks = inject('blocks')
 const blocksActions = inject('blocksActions')
@@ -250,7 +233,7 @@ const { showNotificationMessage } = useNotification()
 const timelineWrapper = ref(null)
 const horizontalHeader = ref(null)
 const timelineGrid = ref(null)
-const MONTH_TASK_EXTRA_HEIGHT = 18
+const MONTH_TASK_EXTRA_HEIGHT = 6
 const measuredBlockHeights = ref({})
 let blockResizeObserver = null
 const resizingMonth = ref(null)
@@ -372,14 +355,6 @@ const getVisibleBlockPosition = (block) => {
   return monthLayout.value.positions[String(block?.id)] || null
 }
 
-const getVisibleBlockLeft = (block) => {
-  return getVisibleBlockPosition(block)?.left || 0
-}
-
-const getVisibleBlockTop = (block) => {
-  return getVisibleBlockPosition(block)?.top || 20
-}
-
 const getVisibleBlockStyle = (block) => {
   const position = getVisibleBlockPosition(block)
   if (!position) {
@@ -391,24 +366,6 @@ const getVisibleBlockStyle = (block) => {
     width: position.width + 'px',
     backgroundColor: getBlockBackgroundColor(block)
   }
-}
-
-const getVisibleLinePosition = (block) => {
-  if (!block.releaseDate) return 0
-  const date = new Date(block.releaseDate)
-  const month = getAbsoluteMonthIndexFromDate(block.releaseDate)
-  const day = date.getDate()
-  const targetDay = visibleDays.value.find(d => d.month === month && d.day === day)
-  return targetDay ? targetDay.visibleCenterX : 0
-}
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  const day = date.getDate().toString().padStart(2, '0')
-  const month = (date.getMonth() + 1).toString().padStart(2, '0')
-  const year = date.getFullYear()
-  return `${day}.${month}.${year}`
 }
 
 // Перетаскивание блока за шапку
@@ -446,51 +403,38 @@ const onBlockDragEnd = () => {
   document.body.classList.remove('is-dragging')
 }
 
-// Drag & Drop lines
-const { 
-  draggedLineBlock, 
-  isDraggingLine, 
-  dragCurrentX, 
-  previewDate, 
-  onLineDragStart, 
-  onGridDragOver, 
-  onLineDragEnd, 
-  onGridDrop
-} = useDragLines(
-  timelineWrapper, 
-  getVisibleLinePosition, 
-  getVisibleBlockLeft, 
-  getAbsoluteMonthIndexFromDate, 
-  visibleDays, 
-  visibleMonthsData, 
-  updateBlockDate, 
-  calculateBlockHeight, 
-  sortedBlocks, 
-  showNotificationMessage
-)
-
 // Удаление блока
 const startEditingDate = (block) => {
   block.editingDate = true
-  block.editDateValue = block.releaseDate
 }
 
-const saveDate = async (block) => {
-  if (!block.editDateValue) return
-
-  const result = await updateBlockDate(block, block.editDateValue)
+const saveDate = async (block, dates) => {
+  const startDate = dates?.startDate ?? block.startDate
+  const releaseDate = dates?.releaseDate ?? block.releaseDate
+  const keepOpen = Boolean(dates?.keepOpen)
+  if (!startDate && !releaseDate) {
+    cancelDateEdit(block)
+    return
+  }
+  if (startDate === (block.startDate || '') && releaseDate === (block.releaseDate || '')) {
+    if (!keepOpen) cancelDateEdit(block)
+    return
+  }
+  const result = await updateBlockDate(block, {
+    startDate,
+    releaseDate,
+    changedField: dates?.changedField
+  })
   if (result.success) {
-    block.editingDate = false
-    delete block.editDateValue
-    showNotificationMessage('✅ Дата обновлена', 'success')
+    if (!keepOpen) block.editingDate = false
+    showNotificationMessage('✅ Даты этапа обновлены', 'success')
   } else {
-    showNotificationMessage('❌ Ошибка обновления даты', 'error')
+    showNotificationMessage('❌ Ошибка обновления дат', 'error')
   }
 }
 
 const cancelDateEdit = (block) => {
   block.editingDate = false
-  delete block.editDateValue
 }
 
 // Синхронизация скролла
@@ -665,6 +609,7 @@ watch(visibleHorizontalTotalWidth, () => {
   right: -7px;
   width: 14px;
   height: 100%;
+  display: block;
   cursor: grab;
   z-index: 40;
   background: linear-gradient(
@@ -673,6 +618,11 @@ watch(visibleHorizontalTotalWidth, () => {
     rgba(59, 130, 246, 0.08) 50%,
     rgba(59, 130, 246, 0) 100%
   );
+}
+.horizontal-month-resize-hit {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .horizontal-month-resize-handle::before {
   content: '';
@@ -695,10 +645,13 @@ watch(visibleHorizontalTotalWidth, () => {
   cursor: grabbing !important;
 }
 
-.horizontal-reset-width-btn {
+.horizontal-reset-width-wrap {
   position: absolute;
   top: 8px;
   left: 8px;
+  z-index: 35;
+}
+.horizontal-reset-width-btn {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -707,7 +660,6 @@ watch(visibleHorizontalTotalWidth, () => {
   background: #eff6ff;
   color: #1d4ed8;
   cursor: pointer;
-  z-index: 35;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -899,118 +851,6 @@ watch(visibleHorizontalTotalWidth, () => {
   opacity: 0.8;
   cursor: grabbing;
   z-index: 100;
-}
-
-/* Линии для Drag & Drop */
-.lines-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: auto;
-  z-index: 5;
-}
-
-.timeline-line {
-  position: absolute;
-  width: 2px;
-  background: #3b82f6;
-  opacity: 0.7;
-  transform: translateX(-50%);
-  cursor: grab;
-  user-select: none;
-  z-index: 15;
-  pointer-events: auto;
-  -webkit-user-drag: element;
-}
-
-.timeline-line:active { cursor: grabbing; }
-
-.timeline-line .line-dot {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #3b82f6;
-}
-
-.timeline-line .line-date {
-  position: absolute;
-  bottom: -20px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 0.7rem;
-  color: white;
-  background: #3b82f6;
-  padding: 4px 8px;
-  border-radius: 16px;
-  white-space: nowrap;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-  cursor: grab;
-}
-
-.line-date:active { cursor: grabbing; }
-.line-date:hover {
-  transform: translateX(-50%) scale(1.1);
-  background: #2563eb;
-}
-
-.timeline-line:hover {
-  opacity: 1;
-  width: 4px;
-  background: #2563eb;
-}
-
-.timeline-line:hover .line-dot { 
-  transform: translateX(-50%) scale(1.5); 
-  background: #2563eb; 
-}
-
-.timeline-line.line-dragging-active,
-.timeline-line.line-dragging-active .line-date { 
-  transition: none !important; 
-}
-
-.timeline-line.line-dragging-active {
-  opacity: 1 !important;
-  width: 4px !important;
-  background: #2563eb !important;
-  box-shadow: 0 0 20px rgba(37, 99, 235, 0.8) !important;
-  z-index: 1000 !important;
-}
-
-.timeline-line.line-dragging-active .line-dot {
-  width: 12px !important;
-  height: 12px !important;
-  background: #2563eb !important;
-}
-
-.timeline-line.line-dragging-active .line-date,
-.line-date-dragging {
-  background: #2563eb !important;
-  transform: translateX(-50%) scale(1.2) !important;
-  font-weight: bold !important;
-  z-index: 1001 !important;
-}
-
-.line-position-indicator {
-  position: absolute;
-  width: 2px;
-  height: 100%;
-  background: #3b82f6;
-  opacity: 0.5;
-  pointer-events: none;
-  z-index: 50;
-  animation: indicatorPulse 1s infinite;
-}
-
-@keyframes indicatorPulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 0.8; }
 }
 
 </style>

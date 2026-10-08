@@ -12,135 +12,161 @@
       @dragstart="onBlockDragStart"
       @dragend="onBlockDragEnd"
     >
-      <div class="block-title-container" @click.stop="onTitleClick">
-        <span class="block-priority" :class="getPriorityClass(block.effort)">
-          {{ getPriorityIcon(block.effort) }}
-        </span>
-        <div class="block-title-wrapper">
-          <h3 class="block-title">{{ block.title }}</h3>
+      <Tooltip :label="block.title" fill>
+        <button
+          type="button"
+          class="block-title"
+          @click.stop="onTitleClick"
+        >
+          {{ block.title }}
+        </button>
+      </Tooltip>
+
+      <div v-if="dateRangeText || block.isOverdue" class="block-header-meta">
+        <Tooltip v-if="block.isOverdue" :label="overdueTitle">
+          <span
+            class="block-overdue"
+            aria-label="Просрочен"
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+              <path
+                d="M10 3.2 17.5 16H2.5L10 3.2Z"
+                fill="none"
+                stroke="#dc2626"
+                stroke-width="1.6"
+                stroke-linejoin="round"
+              />
+              <path d="M10 8v4.2" stroke="#dc2626" stroke-width="1.6" stroke-linecap="round" />
+              <circle cx="10" cy="14.2" r="0.8" fill="#dc2626" />
+            </svg>
+          </span>
+        </Tooltip>
+
+        <button
+          v-if="!block.editingDate && dateRangeText"
+          type="button"
+          class="block-date"
+          :class="{ 'is-readonly': readOnly }"
+          @click.stop="onReleaseClick"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <rect x="2" y="3.5" width="12" height="10.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" />
+            <path d="M2 6.5h12" stroke="currentColor" stroke-width="1.3" />
+            <path d="M5.5 2v3M10.5 2v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+          <span>{{ dateRangeText }}</span>
+        </button>
+        <div
+          v-else-if="block.editingDate"
+          class="block-date-editor"
+          @click.stop
+          @mousedown.stop
+          @focusout="onDateEditorFocusOut"
+        >
+          <Tooltip label="Начало этапа">
+          <input
+            ref="startDateInputRef"
+            type="date"
+            v-model="editStartDate"
+            aria-label="Начало этапа"
+            @change="commitDateEdit('startDate', true)"
+            @keydown.enter.prevent="commitDateEdit('startDate')"
+            @keydown.esc.prevent="$emit('cancel-edit-date')"
+          />
+          </Tooltip>
+          <span class="block-date-sep">—</span>
+          <Tooltip label="Конец этапа">
+          <input
+            ref="endDateInputRef"
+            type="date"
+            v-model="editEndDate"
+            aria-label="Конец этапа"
+            @change="commitDateEdit('releaseDate', true)"
+            @keydown.enter.prevent="commitDateEdit('releaseDate')"
+            @keydown.esc.prevent="$emit('cancel-edit-date')"
+          />
+          </Tooltip>
         </div>
       </div>
     </div>
 
     <div class="block-tasks">
       <div class="tasks-header">
-        <span class="tasks-title">📋 Задачи</span>
+        <span class="tasks-title">Элементы</span>
+        <Tooltip v-if="!readOnly" label="Добавить задачу">
         <button
-          v-if="!readOnly"
           class="add-task-btn"
+          type="button"
           @click.stop="$emit('add-task')"
           aria-label="Добавить задачу"
-          data-tooltip="Добавить задачу"
-        >+</button>
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+        </Tooltip>
       </div>
 
       <div
         class="tasks-list"
-        v-if="block.tasks && block.tasks.length > 0"
+        :class="{ 'is-empty': !sortedTasks.length }"
         @dragover.prevent
         @drop.prevent="onDropTask($event, null)"
       >
-        <DynamicScroller
-          :items="sortedTasks"
-          :min-item-size="45"
-          :buffer="100"
-          class="tasks-virtual-scroller"
-          key-field="id"
-        >
-          <template #default="{ item: task, active }">
-            <DynamicScrollerItem :item="task" :active="active">
-              <TaskItem
-                :task="task"
-                :block="block"
-                :read-only="readOnly"
-                :drag-over="dragOverTask?.id === task.id"
-                :dragging="draggedTask?.id === task.id"
-                @cycle-status="(e) => $emit('cycle-task-status', task, e)"
-                @open-card="openTaskCard(task)"
-                @start-edit="() => $emit('start-task-edit', task)"
-                @save-edit="(e) => $emit('save-task-edit', task, e)"
-                @cancel-edit="() => $emit('cancel-task-edit', task)"
-                @delete="() => $emit('delete-task', task)"
-                @drag-start="(e) => $emit('task-drag-start', e, block, task)"
-                @drag-end="$emit('task-drag-end')"
-                @drag-over="(e) => $emit('task-drag-over', e)"
-                @drop="(e) => $emit('task-drop', e, block, task)"
-                @drag-enter="() => $emit('task-drag-enter', block, task)"
-                @drag-leave="(e) => $emit('task-drag-leave', e)"
-              />
-            </DynamicScrollerItem>
-          </template>
-        </DynamicScroller>
+        <TaskItem
+          v-for="task in sortedTasks"
+          :key="task.id"
+          :task="task"
+          :block="block"
+          :read-only="readOnly"
+          :drag-over="dragOverTask?.id === task.id"
+          :dragging="draggedTask?.id === task.id"
+          @cycle-status="(e) => $emit('cycle-task-status', task, e)"
+          @open-card="openTaskCard(task)"
+          @start-edit="() => $emit('start-task-edit', task)"
+          @save-edit="(e) => $emit('save-task-edit', task, e)"
+          @cancel-edit="() => $emit('cancel-task-edit', task)"
+          @delete="() => $emit('delete-task', task)"
+          @drag-start="(e) => $emit('task-drag-start', e, block, task)"
+          @drag-end="$emit('task-drag-end')"
+          @drag-over="(e) => $emit('task-drag-over', e)"
+          @drop="(e) => $emit('task-drop', e, block, task)"
+          @drag-enter="() => $emit('task-drag-enter', block, task)"
+          @drag-leave="(e) => $emit('task-drag-leave', e)"
+        />
+        <span v-if="!sortedTasks.length" class="empty-text">Нет элементов</span>
       </div>
-
-      <div
-        v-else
-        class="tasks-empty"
-        @dragover.prevent
-        @drop.prevent="onDropTask($event, null)"
-      >
-        <span class="empty-text">Нет задач (перетащите сюда)</span>
-      </div>
-
     </div>
 
-    <div class="task-progress" v-if="block.tasks && block.tasks.length > 0">
+    <div class="block-progress">
       <div class="progress-header">
         <span class="progress-label">Прогресс этапа</span>
-        <span class="progress-value">{{ taskProgress }}% ({{ completedTasksCount }}/{{ block.tasks.length }})</span>
+        <span class="progress-value">{{ progressLabel }}</span>
       </div>
       <div class="progress-bar-container">
         <div
           class="progress-bar-fill"
-          :style="{
-            width: taskProgress + '%',
-            backgroundColor: getProgressColor(taskProgress)
-          }"
+          :style="{ width: taskProgress + '%' }"
         ></div>
       </div>
     </div>
-    <div class="task-progress empty" v-else>
-      <div class="progress-header">
-        <span class="progress-label">Прогресс этапа</span>
-        <span class="progress-value">0%</span>
-      </div>
-      <div class="progress-bar-container">
-        <div class="progress-bar-fill" style="width: 0%;"></div>
-      </div>
-    </div>
 
-    <div class="block-effort-summary" :style="{ background: getEffortColor(block.effort, 0.15) }">
-      <span class="effort-icon">⚡</span>
+    <div class="block-effort-summary">
       <span class="effort-label">Трудозатраты:</span>
-      <span class="effort-value">{{ block.effort || 0 }} / {{ totalTasksEffort }} ч</span>
-    </div>
-
-    <div class="block-release" v-if="!block.editingDate">
-      <span class="release-icon">📅</span>
-      <span class="release-date" :class="{ 'is-readonly': readOnly }" @click.stop="onReleaseClick">
-        {{ formatDate(block.releaseDate) }}
+      <span class="effort-value" :class="{ 'is-over': isEffortOver }">
+        {{ totalTasksEffort }}&nbsp;/&nbsp;{{ block.effort || 0 }}&nbsp;ч
       </span>
-    </div>
-    <div class="block-date-editor" v-else>
-      <input
-        ref="dateInputRef"
-        type="date"
-        v-model="block.editDateValue"
-        @change="$emit('save-date')"
-        @blur="$emit('cancel-edit-date')"
-        @click.stop
-      />
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, inject, unref, ref, watch, nextTick } from 'vue'
-import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import TaskItem from './TaskItem.vue'
+import Tooltip from './Tooltip.vue'
 import { useBlocks } from '@/composables/useBlocks'
 
-// Входные данные карточки этапа + состояние DnD задач, приходящее от родителя.
 const props = defineProps({
   block: { type: Object, required: true },
   style: { type: Object, default: () => ({}) },
@@ -148,7 +174,6 @@ const props = defineProps({
   draggedTask: { type: Object, default: null }
 })
 
-// События наружу: редактирование этапа/задач, DnD и редактирование даты этапа.
 const emit = defineEmits([
   'edit-block',
   'add-task',
@@ -171,63 +196,70 @@ const emit = defineEmits([
   'cancel-edit-date'
 ])
 
-// Декоративные и расчетные helpers этапа из общего composable.
-const { getPriorityClass, getPriorityIcon, getEffortColor, getProgressColor, getTaskProgress, getCompletedTasksCount } = useBlocks()
+const { getTaskProgress, getCompletedTasksCount } = useBlocks()
 
-// Глобальный read-only режим (например, роль guest), передается через provide/inject.
 const readOnlyInjected = inject('readOnly', computed(() => false))
 const readOnly = computed(() => Boolean(unref(readOnlyInjected)))
+const startDateInputRef = ref(null)
+const endDateInputRef = ref(null)
+const editStartDate = ref('')
+const editEndDate = ref('')
 
-// Ссылка на input даты, чтобы программно открыть picker при переходе в режим редактирования.
-const dateInputRef = ref(null)
-
-// Фокусирует input и пытается открыть нативный календарь (если поддерживается браузером).
-const openDatePicker = async () => {
-  await nextTick()
-  const input = dateInputRef.value
-  if (!input) return
-  input.focus({ preventScroll: true })
-  if (typeof input.showPicker === 'function') {
-    try {
-      input.showPicker()
-    } catch {
-      // some browsers may block showPicker() without user gesture
-    }
-  }
+const toDateInputValue = (value) => {
+  const raw = String(value || '').trim()
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+  return ''
 }
 
-// Когда родитель включает block.editingDate, сразу открываем календарь.
+const commitDateEdit = (changedField, keepOpen = false) => {
+  emit('save-date', {
+    startDate: editStartDate.value,
+    releaseDate: editEndDate.value,
+    changedField,
+    keepOpen
+  })
+}
+
+const onDateEditorFocusOut = (event) => {
+  const root = event.currentTarget
+  if (root.contains(event.relatedTarget)) return
+  requestAnimationFrame(() => {
+    const active = document.activeElement
+    if (active === startDateInputRef.value || active === endDateInputRef.value) return
+    emit('cancel-edit-date')
+  })
+}
+
 watch(
   () => props.block?.editingDate,
-  (isEditing) => {
-    if (isEditing) openDatePicker()
+  async (isEditing) => {
+    if (!isEditing) return
+    editStartDate.value = toDateInputValue(props.block.startDate)
+    editEndDate.value = toDateInputValue(props.block.releaseDate)
+    await nextTick()
+    startDateInputRef.value?.focus({ preventScroll: true })
   }
 )
 
-// Клик по заголовку открывает модалку редактирования этапа.
 const onTitleClick = () => {
   emit('edit-block')
 }
 
-// Клик по дате переводит этап в режим редактирования даты (только не в read-only).
 const onReleaseClick = () => {
   if (readOnly.value) return
   emit('start-edit-date')
 }
 
-// Открывает карточку конкретной задачи.
 const openTaskCard = (task) => {
   if (readOnly.value) return
   emit('open-task-card', task)
 }
 
-// Стабильный порядок задач внутри этапа по полю order.
 const sortedTasks = computed(() => {
   if (!props.block.tasks) return []
   return [...props.block.tasks].sort((a, b) => (a.order || 0) - (b.order || 0))
 })
 
-// Агрегаты для шапки прогресса и блока трудозатрат.
 const taskProgress = computed(() => getTaskProgress(props.block))
 const completedTasksCount = computed(() => getCompletedTasksCount(props.block))
 const totalTasksEffort = computed(() => {
@@ -235,50 +267,76 @@ const totalTasksEffort = computed(() => {
   return props.block.tasks.reduce((sum, task) => sum + (task.effort || 0), 0)
 })
 
-// Формат даты для компактного отображения в карточке (dd.mm.yyyy).
+const isEffortOver = computed(() => {
+  const stageEffort = Number(props.block.effort || 0)
+  if (!Number.isFinite(stageEffort) || stageEffort <= 0) return false
+  return totalTasksEffort.value > stageEffort
+})
+
+const progressLabel = computed(() => {
+  const total = Array.isArray(props.block.tasks) ? props.block.tasks.length : 0
+  if (!total) return '0%'
+  return `${taskProgress.value}% (${completedTasksCount.value}/${total})`
+})
+
 const formatDate = (dateStr) => {
   if (!dateStr) return ''
   const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return ''
   const day = date.getDate().toString().padStart(2, '0')
   const month = (date.getMonth() + 1).toString().padStart(2, '0')
   const year = date.getFullYear()
   return `${day}.${month}.${year}`
 }
 
-// Пробрасывает drop в родителя вместе с текущим этапом и целевой задачей (или null в конец списка).
+const dateRangeText = computed(() => {
+  const startText = formatDate(props.block.startDate)
+  const endText = formatDate(props.block.releaseDate)
+  if (!startText && !endText) return ''
+  if (startText && endText) return `${startText} — ${endText}`
+  if (startText) return `${startText} — …`
+  return `… — ${endText}`
+})
+
+const overdueTitle = computed(() => {
+  if (!props.block?.isOverdue) return 'Просрочен'
+  const endText = formatDate(props.block.releaseDate)
+  return endText ? `Просрочен (до ${endText})` : 'Просрочен'
+})
+
 const onDropTask = (event, targetTask) => {
   emit('task-drop', event, props.block, targetTask)
 }
 
-// Старт DnD этапа: блокируем перетаскивание в read-only и при попытке тянуть за кнопку.
 const onBlockDragStart = (event) => {
   if (readOnly.value) {
     event.preventDefault()
     return
   }
-  if (event.target.tagName === 'BUTTON') {
+  if (event.target.closest('.block-date, .block-date-editor, .block-overdue')) {
     event.preventDefault()
     return
   }
   emit('block-drag-start', event, props.block)
 }
 
-// Сигнал родителю о завершении DnD этапа.
 const onBlockDragEnd = () => {
   emit('block-drag-end')
 }
 </script>
 
 <style scoped>
-/* Стили копируем из App.vue, адаптируем под scoped */
 .block {
   position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-  transition: all 0.15s;
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
   z-index: 50;
   cursor: pointer;
   box-sizing: border-box;
@@ -287,220 +345,231 @@ const onBlockDragEnd = () => {
   font-weight: 400;
 }
 .block:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.06);
   z-index: 21;
-}
-.block-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 6px;
-  cursor: grab;
-  user-select: none;
-  padding: 4px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.5);
-}
-.block-header:active { cursor: grabbing; }
-.block-header:hover { background: rgba(59, 130, 246, 0.1); }
-.block-header.header-readonly {
-  cursor: default;
-}
-.block-header.header-readonly:hover {
-  background: rgba(255, 255, 255, 0.5);
-}
-.block-title-container {
-  display: flex;
-  gap: 4px;
-  flex: 1;
-}
-.block-priority { font-size: 0.9rem; width: 14px; text-align: center; }
-.priority-low { color: #22c55e; }
-.priority-medium { color: #eab308; }
-.priority-high { color: #f97316; }
-.priority-critical { color: #ef4444; animation: pulse 1.5s infinite; }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-.block-title {
-  font-family: 'Montserrat', sans-serif;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: #0f172a;
-  word-break: break-word;
-  line-height: 1.3;
-  margin: 0;
-}
-.block-badge {
-  background: #f1f5f9;
-  padding: 2px 6px;
-  border-radius: 30px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  white-space: nowrap;
-  margin-left: 4px;
-}
-.block-effort-summary {
-  margin-top: 8px;
-  margin-bottom: 8px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 6px 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
-}
-.block-effort-summary .effort-label {
-  color: #475569;
-  font-weight: 600;
-}
-.block-effort-summary .effort-value {
-  margin-left: auto;
-  color: #0f172a;
-  font-weight: 700;
-}
-.block-description {
-  font-size: 0.75rem;
-  color: #475569;
-  margin-bottom: 6px;
-  line-height: 1.3;
-}
-.block-release {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  margin-bottom: 6px;
-  font-size: 0.7rem;
-  color: #64748b;
-  background: #f8fafc;
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-.release-date {
-  font-weight: 500;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
-.release-date:hover { background: #e2e8f0; }
-.release-date.is-readonly {
-  cursor: default;
-  pointer-events: none;
 }
 .block.completed {
   background: #90EE90 !important;
   border-color: #86efac;
 }
-.block-date-editor input[type="date"] {
+
+.block-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: grab;
+  user-select: none;
+  min-width: 0;
+}
+.block-header:active { cursor: grabbing; }
+.block-header.header-readonly,
+.block-header.header-readonly:active {
+  cursor: default;
+}
+
+.block-title {
+  display: block;
   width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: Inter, system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.block-title:hover {
+  color: #1d4ed8;
+}
+
+.block-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+.block-overdue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+.block-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #475569;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.block-date:hover {
+  background: rgba(148, 163, 184, 0.16);
+}
+.block-date.is-readonly {
+  cursor: default;
+  pointer-events: none;
+}
+.block-date-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.block-date-sep {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+.block-date-editor input[type="date"] {
+  width: 118px;
   max-width: 100%;
   box-sizing: border-box;
-  display: block;
-  padding: 6px 10px;
+  padding: 4px 6px;
   border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  font-size: 0.74rem;
-  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  background: #fff;
   color: #334155;
   outline: none;
 }
 .block-date-editor input[type="date"]:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
-  background: white;
 }
+
 .block-tasks {
-  margin: 8px 0;
-  padding: 6px 8px;
-  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
   border-radius: 6px;
-  border: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.72);
+  min-width: 0;
 }
 .tasks-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  min-height: 24px;
 }
 .tasks-title {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  color: #475569;
-  text-transform: uppercase;
+  color: #64748b;
 }
 .add-task-btn {
-  width: 25px;
-  height: 25px;
-  border-radius: 15px;
-  border: 1px solid #3b82f6;
-  background: white;
-  color: #3b82f6;
-  font-size: 1rem;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: #2563eb;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  position: relative;
 }
-.add-task-btn:hover { background: #3b82f6; color: white; }
-.add-task-btn[data-tooltip]:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 6px);
-  transform: translateX(-50%);
-  background: rgba(255, 255, 255, 0.98);
-  color: #1e293b;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 4px 8px;
-  font-size: 0.68rem;
-  font-weight: 600;
-  white-space: nowrap;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
-  z-index: 40;
-  pointer-events: none;
+.add-task-btn:hover {
+  background: rgba(37, 99, 235, 0.1);
 }
-.tasks-list { max-height: 900px; overflow-y: auto; }
-.tasks-empty {
-  min-height: 40px;
-  border: 2px dashed #cbd5e1;
-  border-radius: 6px;
-  background: #f8fafc;
+.tasks-list {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 0;
+  flex-direction: column;
+  min-width: 0;
 }
-.empty-text { font-size: 0.7rem; color: #475569; font-style: italic; }
+.tasks-list.is-empty {
+  min-height: 28px;
+  justify-content: center;
+}
+.empty-text {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.block-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
 .progress-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
-  font-size: 0.7rem;
+  gap: 8px;
+  font-size: 0.72rem;
 }
-.progress-label { color: #475569; font-weight: 500; text-transform: uppercase; }
+.progress-label {
+  color: #64748b;
+  font-weight: 600;
+}
 .progress-value {
   color: #0f172a;
-  font-weight: 600;
-  background: #f1f5f9;
-  padding: 2px 6px;
-  border-radius: 12px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 2px 8px;
+  border-radius: 8px;
 }
 .progress-bar-container {
   height: 6px;
-  background: #f1f5f9;
+  background: rgba(241, 245, 249, 0.9);
   border-radius: 3px;
   overflow: hidden;
 }
 .progress-bar-fill {
   height: 100%;
+  background: #3b82f6;
   transition: width 0.3s ease;
   border-radius: 3px;
+}
+
+.block-effort-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.72rem;
+  flex-wrap: nowrap;
+}
+.effort-label {
+  color: #64748b;
+}
+.effort-value {
+  flex-shrink: 0;
+  color: #0f172a;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.effort-value.is-over {
+  color: #dc2626;
 }
 </style>

@@ -2,10 +2,6 @@ import { ref } from 'vue'
 import axios from 'axios'
 import { useAuth } from './useAuth'
 import { useBlocks } from './useBlocks'
-import {
-  removePredecessorIdFromAllTasks,
-  filterPredecessorsToExistingTasks
-} from '@/utils/taskModel'
 
 // Guard от ложного blur сразу после открытия inline-редактора.
 /** Сразу после открытия редактирования textarea может получить ложный blur (вирт. скроллер / пересчёт высоты). */
@@ -14,7 +10,7 @@ const taskEditBlurGuardUntil = new WeakMap()
 
 export function useTasks() {
   const { isReadOnly, API_URL } = useAuth()
-  const { updateBlock, applyBlockFromApi, forceUpdatePositions } = useBlocks()
+  const { applyBlockFromApi, forceUpdatePositions } = useBlocks()
   const apiPath = (path) => `${API_URL}${path.startsWith('/') ? path : `/${path}`}`
   const taskStatusUpdateInFlight = new Set()
 
@@ -237,7 +233,8 @@ export function useTasks() {
   const onTaskDragStart = (event, block, task) => {
     event.stopPropagation()
     const t = event.target
-    if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.tagName === 'BUTTON' || t?.closest?.('button')) {
+    // Не начинаем DnD с полей ввода и кнопки ссылки; кружок статуса и строка элемента — хэндлы.
+    if (t?.closest?.('input, textarea, a, .task-link-btn, .task-edit-input')) {
       event.preventDefault()
       return
     }
@@ -305,61 +302,59 @@ export function useTasks() {
     clearDragOverState()
   }
 
+  const sortedTaskIds = (block) =>
+    [...(block?.tasks || [])]
+      .sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0))
+      .map((task) => task.id)
+      .filter(Boolean)
+
+  const persistTaskOrder = async (block, taskIds) => {
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
+    try {
+      const response = await axios.put(apiPath(`/blocks/${block.id}/tasks/order`), { taskIds })
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data }
+    } catch (error) {
+      console.error('❌ Ошибка порядка задач:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка порядка задач') }
+    }
+  }
+
   // Переставляет задачу в конец текущего этапа.
   const reorderTaskToEndOfBlock = async (block, sourceTask) => {
     if (!block.tasks?.length) return
-    const newTasks = block.tasks.filter((t) => t.id !== sourceTask.id)
-    newTasks.push(sourceTask)
-    newTasks.forEach((task, idx) => { task.order = idx })
-    const result = await updateBlock({ ...block, tasks: newTasks })
-    if (result.success) forceUpdatePositions()
-    return result
+    const ids = sortedTaskIds(block).filter((id) => id !== sourceTask.id)
+    ids.push(sourceTask.id)
+    return persistTaskOrder(block, ids)
   }
 
   // Перестановка задач внутри одного этапа.
   const reorderTaskInsideBlock = async (block, sourceTask, targetTask) => {
     if (!targetTask || sourceTask.id === targetTask.id) return
-    const newTasks = [...block.tasks]
-    const sourceIndex = newTasks.findIndex((t) => t.id === sourceTask.id)
-    const targetIndex = newTasks.findIndex((t) => t.id === targetTask.id)
+    const ids = sortedTaskIds(block)
+    const sourceIndex = ids.indexOf(sourceTask.id)
+    const targetIndex = ids.indexOf(targetTask.id)
     if (sourceIndex === -1 || targetIndex === -1) return
-    const [movedTask] = newTasks.splice(sourceIndex, 1)
-    newTasks.splice(targetIndex, 0, movedTask)
-    newTasks.forEach((task, idx) => { task.order = idx })
-    const result = await updateBlock({ ...block, tasks: newTasks })
-    if (result.success) forceUpdatePositions()
-    return result
+    ids.splice(sourceIndex, 1)
+    ids.splice(targetIndex, 0, sourceTask.id)
+    return persistTaskOrder(block, ids)
   }
 
-  // Перенос задачи между этапами с очисткой невалидных зависимостей.
+  // Перенос задачи между этапами. Зависимости чистит SQL.
   const moveTaskBetweenBlocks = async (sourceBlock, targetBlock, sourceTask, targetTask) => {
-    const sourceTasks = removePredecessorIdFromAllTasks(
-      sourceBlock.tasks.filter((t) => t.id !== sourceTask.id),
-      sourceTask.id
-    )
-    const taskToMoveRaw = { ...sourceTask, isEditing: false }
-
-    let targetTasks
-    if (targetTask) {
-      const targetIndex = targetBlock.tasks.findIndex((t) => t.id === targetTask.id)
-      targetTasks = [...targetBlock.tasks]
-      targetTasks.splice(targetIndex, 0, taskToMoveRaw)
-    } else {
-      targetTasks = [...targetBlock.tasks, taskToMoveRaw]
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
+    try {
+      const response = await axios.post(
+        apiPath(`/blocks/${sourceBlock.id}/tasks/${sourceTask.id}/move`),
+        { toBlockId: targetBlock.id, beforeTaskId: targetTask?.id || null }
+      )
+      if (response.data?.source) applyHydratedBlock(response.data.source)
+      if (response.data?.target) applyHydratedBlock(response.data.target)
+      return { success: true }
+    } catch (error) {
+      console.error('❌ Ошибка переноса задачи:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка переноса задачи') }
     }
-
-    const allowedIds = new Set(targetTasks.map((t) => t.id))
-    const taskToMove = filterPredecessorsToExistingTasks(taskToMoveRaw, allowedIds)
-    const movedIdx = targetTasks.findIndex((t) => t.id === sourceTask.id)
-    if (movedIdx !== -1) targetTasks[movedIdx] = taskToMove
-
-    sourceTasks.forEach((task, idx) => { task.order = idx })
-    targetTasks.forEach((task, idx) => { task.order = idx })
-
-    const updateSource = await updateBlock({ ...sourceBlock, tasks: sourceTasks })
-    const updateTarget = await updateBlock({ ...targetBlock, tasks: targetTasks })
-    if (updateSource.success && updateTarget.success) forceUpdatePositions()
-    return { success: updateSource.success && updateTarget.success }
   }
 
   return {

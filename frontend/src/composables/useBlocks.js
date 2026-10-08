@@ -235,13 +235,40 @@ export function useBlocks() {
     }
   }
 
-  // Частичное обновление только даты релиза этапа.
-  const updateBlockDate = async (block, newDate) => {
+  const toDateInputValue = (value) => {
+    const raw = String(value || '').trim()
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+    return ''
+  }
+
+  const normalizeStageDatePair = (startDate, releaseDate, changedField) => {
+    let start = toDateInputValue(startDate)
+    let end = toDateInputValue(releaseDate)
+    if (start && end && start > end) {
+      if (changedField === 'startDate') end = start
+      else if (changedField === 'releaseDate') start = end
+      else {
+        const swapped = start
+        start = end
+        end = swapped
+      }
+    }
+    return { startDate: start, releaseDate: end }
+  }
+
+  // Частичное обновление дат этапа (начало и/или конец).
+  const updateBlockDate = async (block, dates) => {
     try {
       if (isReadOnly.value) {
         return { success: false, error: new Error('read-only') }
       }
-      const updatedBlock = { ...block, releaseDate: newDate }
+      const patch = typeof dates === 'string' ? { releaseDate: dates } : (dates || {})
+      const { startDate, releaseDate } = normalizeStageDatePair(
+        patch.startDate ?? block.startDate,
+        patch.releaseDate ?? block.releaseDate,
+        patch.changedField
+      )
+      const updatedBlock = { ...block, startDate, releaseDate }
       const response = await axios.put(apiPath(`/blocks/${block.id}`), stageFieldsFrom(updatedBlock))
       const merged = applyBlockFromApi(response.data, {
         stagePredecessorIds: updatedBlock.stagePredecessorIds,
@@ -400,19 +427,9 @@ const forceUpdatePositions = () => {
   }
 
   const calculateBlockHeight = (block) => {
-    let height = 80
-    if (block.title && block.title.length > 30) height += 20
-    else if (block.title && block.title.length > 20) height += 10
-    if (block.description) height += 20
-    if (block.tasks && block.tasks.length > 0) {
-      height += 40
-      height += block.tasks.length * 30
-    } else {
-      height += 40
-    }
-    height += 50
-    height += 40
-    return Math.min(height, 1200)
+    const tasksCount = Array.isArray(block?.tasks) ? block.tasks.length : 0
+    const itemsHeight = tasksCount > 0 ? tasksCount * 28 : 28
+    return Math.min(56 + 40 + itemsHeight + 40 + 32, 1200)
   }
 
   // Получение оригинального блока по ID (для тепловой карты)
