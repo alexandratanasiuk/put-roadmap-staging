@@ -9,29 +9,45 @@
   >
     <div class="modal" @click.stop>
       <div class="modal-header">
-        <h3 v-if="isReadOnly">👁 Просмотр этапа</h3>
-        <h3 v-else>Редактировать этап</h3>
-        <button class="close-btn" @click="handleClose">×</button>
+        <h3>{{ isReadOnly ? 'Просмотр этапа' : 'Редактировать этап' }}</h3>
+        <button class="close-btn" type="button" aria-label="Закрыть" @click="handleClose">×</button>
       </div>
       
       <div class="modal-two-columns">
-        <!-- Левая колонка -->
         <div class="modal-left">
           <div class="form-group">
-            <label>Название этапа</label>
-            <input 
-              v-model="editingBlock.title" 
-              type="text" 
-              placeholder="Например: Тайм-трекинг"
+            <label>Название</label>
+            <textarea
+              v-model="editingBlock.title"
+              class="stage-name-input"
+              rows="2"
+              placeholder="Название этапа"
               :readonly="isReadOnly"
-            >
+            ></textarea>
           </div>
           
           <div class="form-group">
-            <label>Описание</label>
-            <textarea 
-              v-model="editingBlock.description" 
-              rows="4" 
+            <div class="form-label-row">
+              <label>Описание</label>
+              <Tooltip :label="descriptionCopied ? 'Скопировано' : 'Копировать описание'">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  :disabled="!String(editingBlock.description || '').trim()"
+                  aria-label="Копировать описание"
+                  @click="copyDescription"
+                >
+                  <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                    <rect x="7" y="7" width="9" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M5 13H4.5A1.5 1.5 0 0 1 3 11.5v-8A1.5 1.5 0 0 1 4.5 2h8A1.5 1.5 0 0 1 14 3.5V5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                  </svg>
+                </button>
+              </Tooltip>
+            </div>
+            <textarea
+              v-model="editingBlock.description"
+              class="stage-description-input"
+              rows="7"
               placeholder="Краткое описание целей этапа..."
               :readonly="isReadOnly"
             ></textarea>
@@ -39,160 +55,115 @@
           
           <div class="form-row">
             <div class="form-group">
-              <label>🚀 Дата начала</label>
+              <label>Дата начала</label>
               <input v-model="editingBlock.startDate" type="date" :disabled="isReadOnly">
             </div>
             <div class="form-group">
-              <label>📅 Дата окончания</label>
+              <label>Дата окончания</label>
               <input v-model="editingBlock.releaseDate" type="date" :disabled="isReadOnly">
             </div>
           </div>
 
           <div class="form-group">
-            <div class="effort-header">
-              <label>⚡ Трудозатраты</label>
-              <div class="effort-controls">
-                <span
-                  v-if="isReadOnly || !isEditingBlockEffort"
-                  class="effort-value"
-                  :class="{ 'effort-value-editable': !isReadOnly }"
-                  @click="startBlockEffortEdit"
-                >
-                  {{ editingBlock.effort || 0 }} ч
-                </span>
-                <input
-                  v-else
-                  ref="effortInlineInput"
-                  v-model.number="editingBlock.effort"
-                  type="number"
-                  min="0"
-                  max="1000"
-                  step="1"
-                  class="effort-inline-input"
-                  @input="normalizeBlockEffort"
-                  @blur="finishBlockEffortEdit"
-                  @keyup.enter.prevent="finishBlockEffortEdit"
-                  @keyup.esc.prevent="cancelBlockEffortEdit"
-                >
-              </div>
-            </div>
-            <div class="effort-input">
-              <div class="effort-gradient-wrap">
-                <div class="effort-gradient-track"></div>
-                <input
-                  v-model.number="editingBlock.effort"
-                  type="range"
-                  min="0"
-                  max="1000"
-                  step="1"
-                  class="effort-range"
-                  :disabled="isReadOnly"
-                  @input="normalizeBlockEffort"
-                >
-              </div>
-              <div class="effort-gradient-labels">
-                <span>0</span>
-                <span>1000</span>
-              </div>
-            </div>
+            <label>Трудозатраты, ч</label>
+            <input
+              v-model.number="editingBlock.effort"
+              class="stage-full-input"
+              type="number"
+              min="0"
+              step="1"
+              :readonly="isReadOnly"
+              @input="normalizeBlockEffort"
+            >
           </div>
 
           <div class="form-group">
-            <label>👤 Владелец этапа</label>
-            <select v-model="editingBlock.ownerUsername" :disabled="isReadOnly">
-              <option
-                v-for="user in owners"
-                :key="user.username"
-                :value="user.username"
-              >
-                {{ user.username }}{{ user.role === 'admin' ? ' (admin)' : '' }}
-              </option>
-            </select>
+            <label>Владелец этапа</label>
+            <AppSelect
+              v-model="editingBlock.ownerUsername"
+              :options="ownerOptions"
+              :disabled="isReadOnly"
+              placeholder="Выберите владельца"
+            />
           </div>
           <div class="form-group">
-            <label>📁 Проект</label>
-            <select v-model="editingBlock.projectId" :disabled="isReadOnly || !projects.length">
-              <option v-if="!projects.length" value="">Нет проектов</option>
-              <option
-                v-for="project in projects"
-                :key="project.id"
-                :value="project.id"
-              >
-                {{ project.name }}
-              </option>
-            </select>
+            <label>Проект</label>
+            <AppSelect
+              v-model="editingBlock.projectId"
+              :options="projectOptions"
+              :disabled="isReadOnly || !projects.length"
+              placeholder="Нет проектов"
+            />
           </div>
         </div>
         
-        <!-- Правая колонка - задачи -->
         <div class="modal-right">
           <div class="tasks-header-modal">
-            <label>📋 Задачи этапа</label>
-            <button v-if="!isReadOnly" class="btn-add-task-modal" @click="addTaskInModal">+ Добавить задачу</button>
+            <label>Элементы</label>
+            <button
+              v-if="!isReadOnly"
+              type="button"
+              class="btn-add-task-modal"
+              @click="addTaskInModal"
+            >
+              + Добавить элемент
+            </button>
           </div>
           
-          <div class="modal-tasks-list">
+          <div class="modal-tasks-list" :class="{ 'is-empty': !editingBlock.tasks?.length }">
             <div
               v-for="task in editingBlock.tasks"
               :key="task.id"
               class="modal-task-wrap"
+              :class="{ 'is-expanded': taskEditorTaskId === task.id }"
             >
               <div
                 class="modal-task-item"
-                :class="{ 'task-done-modal': task.status === 'done' }"
+                :class="{
+                  'is-active': taskEditorTaskId === task.id,
+                  'task-done-modal': task.status === 'done'
+                }"
+                @click="openTaskEditor(task)"
               >
-                <div class="modal-task-status" @click="!isReadOnly && cycleTaskStatusInModal(task)">
-                  <span class="status-icon" :style="{ color: getStatusColor(task.status) }">
-                    {{ getStatusIcon(task.status) }}
-                  </span>
-                </div>
-
-                <div class="modal-task-content">
-                  <div v-if="task.isEditingInModal" class="modal-task-edit-area">
-                    <textarea
-                      v-model="task.editValue"
-                      @blur="saveTaskEditInModal(task)"
-                      @keyup.enter="saveTaskEditInModal(task)"
-                      @keyup.esc="cancelTaskEditInModal(task)"
-                      class="modal-task-input"
-                      rows="2"
-                      autofocus
-                    ></textarea>
-                  </div>
-                  <div v-else class="modal-task-info">
-                    <span class="modal-task-title" :class="{ 'has-link': hasTaskLinkUrl(task) }" @click="onTaskTitleClickInModal(task)">
-                      {{ task.title }}
-                    </span>
-                    <div class="modal-task-effort">
-                      <span class="effort-icon">⚡</span>
-                      <span class="task-effort-value">{{ task.effort || 0 }} ч</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-if="!isReadOnly" class="modal-task-actions">
+                <button
+                  type="button"
+                  class="task-status"
+                  :class="statusClass(task)"
+                  :disabled="isReadOnly"
+                  :aria-label="statusLabel(task)"
+                  @click.stop="cycleTaskStatusInModal(task)"
+                ></button>
+                <Tooltip :label="task.title" fill>
+                  <span class="modal-task-title">{{ task.title }}</span>
+                </Tooltip>
+                <div class="modal-task-meta">
                   <button
-                    class="modal-task-edit"
-                    :class="{ active: taskEditorTaskId === task.id }"
-                    @click.stop="openTaskEditor(task)"
-                    title="Редактировать задачу"
+                    v-if="hasTaskLinkUrl(task)"
+                    type="button"
+                    class="modal-task-link"
+                    aria-label="Открыть ссылку"
+                    @click.stop="openTaskLink(task)"
                   >
-                    <svg class="modal-task-edit-icon" viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M4.2 19.8l2.5-6.1L16.4 4l3.6 3.6-9.7 9.7-6.1 2.5z" fill="#4ea3e1" />
-                      <path d="M15.8 4.6l1.9-1.9a1.8 1.8 0 0 1 2.6 0l1 1a1.8 1.8 0 0 1 0 2.6l-1.9 1.9-3.6-3.6z" fill="#2f5bd1" />
-                      <path d="M17.6 3.8l2.6 2.6-1.8 1.8-2.6-2.6 1.8-1.8z" fill="#d5dbe5" />
-                    </svg>
+                    <img class="modal-task-link-icon" :src="linkIcon" alt="">
                   </button>
-                  <button class="modal-task-delete" @click="deleteTaskInModal(task)" title="Удалить">🗑️</button>
+                  <span class="task-effort-value">{{ task.effort || 0 }} ч</span>
                 </div>
               </div>
 
               <div
                 v-if="!isReadOnly && taskEditorTaskId === task.id"
-                class="modal-task-link-panel modal-task-editor-panel"
+                class="modal-task-editor-panel"
                 :data-task-editor-id="String(task.id)"
                 @click.stop
               >
+                <label class="modal-task-link-label">Название</label>
+                <textarea
+                  v-model="taskEditorDraft.title"
+                  class="modal-task-link-field modal-task-name-field"
+                  rows="2"
+                  placeholder="Название элемента"
+                ></textarea>
+
                 <label class="modal-task-link-label">Ссылка</label>
                 <div class="modal-task-link-row">
                   <input
@@ -203,6 +174,13 @@
                     placeholder="https://..."
                     @click.stop
                   >
+                  <button
+                    v-if="taskEditorDraft.linkUrl"
+                    type="button"
+                    class="icon-btn"
+                    aria-label="Очистить ссылку"
+                    @click="clearTaskEditorLink"
+                  >×</button>
                 </div>
 
                 <div class="form-row modal-task-dates-row">
@@ -228,50 +206,46 @@
                   </label>
                 </div>
 
-                <label class="modal-task-link-label">Оценка часов</label>
-                <div class="modal-task-link-row">
-                  <input
-                    v-model.number="taskEditorDraft.effort"
-                    type="number"
-                    class="modal-task-link-field modal-task-effort-field"
-                    min="0"
-                    step="1"
-                    placeholder="0"
-                  >
-                </div>
+                <label class="modal-task-link-label">Трудозатраты, ч</label>
+                <input
+                  v-model.number="taskEditorDraft.effort"
+                  type="number"
+                  class="modal-task-link-field modal-task-effort-field"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                >
 
-                <div class="modal-task-link-actions modal-task-editor-actions">
-                  <button type="button" class="btn btn-text" @click="cancelTaskEditor">
-                    Отмена
+                <div class="modal-task-editor-actions">
+                  <button type="button" class="btn btn-danger" @click="deleteTaskInModal(task)">
+                    Удалить
                   </button>
-                  <button type="button" class="btn btn-text btn-clear-link-inline" @click="clearTaskEditorLink">
-                    Очистить ссылку
-                  </button>
-                  <button type="button" class="btn btn-secondary" @click="saveTaskEditor(task)">
-                    Сохранить
-                  </button>
+                  <div class="footer-actions">
+                    <button type="button" class="btn btn-text" @click="cancelTaskEditor">Отмена</button>
+                    <button type="button" class="btn btn-secondary" @click="saveTaskEditor(task)">Сохранить</button>
+                  </div>
                 </div>
               </div>
             </div>
             
             <div v-if="!editingBlock.tasks || editingBlock.tasks.length === 0" class="modal-tasks-empty">
-              <span>📭 Нет задач</span>
-              <span class="empty-hint">{{ isReadOnly ? 'Только просмотр' : 'Нажмите "+ Добавить задачу"' }}</span>
+              Нет элементов
             </div>
           </div>
           
           <div class="tasks-total-effort" v-if="editingBlock.tasks && editingBlock.tasks.length > 0">
-            <span class="total-label">Сумма по задачам:</span>
+            <span class="total-label">Сумма по элементам</span>
             <span class="total-value">{{ getTotalTasksEffort() }} ч</span>
           </div>
         </div>
       </div>
       
       <div class="modal-footer">
-        <button v-if="!isReadOnly" class="btn btn-danger" @click="handleDelete">🗑️ Удалить</button>
+        <button v-if="!isReadOnly" type="button" class="btn btn-danger" @click="handleDelete">Удалить</button>
+        <span v-else></span>
         <div class="footer-actions">
-          <button class="btn btn-text" @click="handleClose">{{ isReadOnly ? 'Закрыть' : 'Отмена' }}</button>
-          <button v-if="!isReadOnly" class="btn btn-secondary" @click="handleSave">Сохранить</button>
+          <button type="button" class="btn btn-text" @click="handleClose">{{ isReadOnly ? 'Закрыть' : 'Отмена' }}</button>
+          <button v-if="!isReadOnly" type="button" class="btn btn-secondary" @click="handleSave">Сохранить</button>
         </div>
       </div>
     </div>
@@ -279,7 +253,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, nextTick } from 'vue'
+import { ref, watch, onMounted, nextTick, computed } from 'vue'
 import axios from 'axios'
 import { useAuth } from '@/composables/useAuth'
 import { useProjects } from '@/composables/useProjects'
@@ -287,6 +261,9 @@ import {
   normalizeTasksArray,
   removePredecessorIdFromAllTasks
 } from '@/utils/taskModel'
+import Tooltip from './Tooltip.vue'
+import AppSelect from './AppSelect.vue'
+import linkIcon from '@/assets/link-icon.png'
 
 // Модалка редактирует один этап целиком (поля этапа + вложенные задачи).
 const props = defineProps({
@@ -308,14 +285,15 @@ const taskEditorTaskId = ref(null)
 
 // Черновик mini-редактора задачи (ссылка/даты/оценка) внутри модалки этапа.
 const taskEditorDraft = ref({
+  title: '',
   linkUrl: '',
   startDate: '',
   releaseDate: '',
   effort: 0
 })
 const isEditingBlockEffort = ref(false)
-const effortBeforeEdit = ref(0)
-const effortInlineInput = ref(null)
+const descriptionCopied = ref(false)
+let descriptionCopyTimer = null
 
 // Контроль pointer-состояния оверлея, чтобы не закрывать модалку при drag-жестах.
 const overlayPointerState = ref({
@@ -400,18 +378,19 @@ const openTaskEditor = (task) => {
   taskEditorTaskId.value = task.id
   const { startDate, releaseDate } = clampTaskDatesToStage(task.startDate, task.releaseDate)
   taskEditorDraft.value = {
+    title: task.title || '',
     linkUrl: task.linkUrl || '',
     startDate,
     releaseDate,
     effort: Number.isFinite(Number(task.effort)) ? Number(task.effort) : 0
   }
-  focusTaskEditorLinkInput()
+  focusTaskEditorNameInput()
 }
 
-const focusTaskEditorLinkInput = async () => {
+const focusTaskEditorNameInput = async () => {
   await nextTick()
-  if (!taskEditorTaskId.value) return
-  const el = document.getElementById(`task-editor-link-${taskEditorTaskId.value}`)
+  const panel = document.querySelector(`[data-task-editor-id="${taskEditorTaskId.value}"]`)
+  const el = panel?.querySelector('.modal-task-name-field')
   if (!el) return
   el.focus({ preventScroll: true })
   if (typeof el.select === 'function') el.select()
@@ -431,6 +410,8 @@ const saveTaskEditor = (task) => {
     taskEditorDraft.value.startDate,
     taskEditorDraft.value.releaseDate
   )
+  const title = String(taskEditorDraft.value.title || '').trim()
+  if (title) task.title = title
   task.linkUrl = normalizeLinkUrl(taskEditorDraft.value.linkUrl)
   task.startDate = startDate
   task.releaseDate = releaseDate
@@ -505,25 +486,50 @@ const loadOwners = async () => {
 onMounted(loadOwners)
 onMounted(loadProjects)
 
+const ownerOptions = computed(() =>
+  (owners.value || []).map((user) => ({
+    value: user.username,
+    label: `${user.username}${user.role === 'admin' ? ' (admin)' : ''}`
+  }))
+)
+
+const projectOptions = computed(() =>
+  (projects.value || []).map((project) => ({
+    value: project.id,
+    label: project.name
+  }))
+)
+
 watch(projects, (list) => {
   if (!editingBlock.value || editingBlock.value.projectId) return
   editingBlock.value.projectId = activeProjectId.value || list?.[0]?.id || ''
 }, { deep: true })
 
 // Локальные helper-методы отображения статусов задач в модалке этапа.
-const getStatusIcon = (status) => {
-  switch(status) {
-    case 'done': return '✅'
-    case 'progress': return '🕛'
-    default: return '○'
-  }
+const statusClass = (task) => {
+  if (task?.status === 'done') return 'task-status_done'
+  if (task?.status === 'progress') return 'task-status_progress'
+  return 'task-status_todo'
 }
 
-const getStatusColor = (status) => {
-  switch(status) {
-    case 'done': return '#90EE90'
-    case 'progress': return '#eab308'
-    default: return '#deddd1'
+const statusLabel = (task) => {
+  if (task?.status === 'done') return 'Выполнено'
+  if (task?.status === 'progress') return 'В работе'
+  return 'Не начато'
+}
+
+const copyDescription = async () => {
+  const text = String(editingBlock.value?.description || '').trim()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    descriptionCopied.value = true
+    clearTimeout(descriptionCopyTimer)
+    descriptionCopyTimer = setTimeout(() => {
+      descriptionCopied.value = false
+    }, 1600)
+  } catch (error) {
+    console.error('Не удалось скопировать описание', error)
   }
 }
 
@@ -545,34 +551,11 @@ const normalizeBlockEffort = () => {
   editingBlock.value.effort = Math.max(0, Math.min(1000, Math.round(raw)))
 }
 
-const startBlockEffortEdit = () => {
-  if (isReadOnly.value) return
-  effortBeforeEdit.value = Number(editingBlock.value?.effort) || 0
-  isEditingBlockEffort.value = true
-  nextTick(() => {
-    const el = effortInlineInput.value
-    if (!el) return
-    el.focus({ preventScroll: true })
-    if (typeof el.select === 'function') el.select()
-  })
-}
-
-const finishBlockEffortEdit = () => {
-  normalizeBlockEffort()
-  isEditingBlockEffort.value = false
-}
-
-const cancelBlockEffortEdit = () => {
-  editingBlock.value.effort = effortBeforeEdit.value
-  isEditingBlockEffort.value = false
-}
-
-// CRUD задач внутри модалки этапа (без обращения к API до финального Save).
 const addTaskInModal = () => {
   if (isReadOnly.value) return
   const newTask = {
     id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
-    title: 'Новая задача',
+    title: 'Новый элемент',
     linkUrl: '',
     linkNote: '',
     status: 'todo',
@@ -583,6 +566,7 @@ const addTaskInModal = () => {
   
   if (!editingBlock.value.tasks) editingBlock.value.tasks = []
   editingBlock.value.tasks.push(newTask)
+  openTaskEditor(newTask)
 }
 
 const cycleTaskStatusInModal = (task) => {
@@ -729,92 +713,173 @@ const handleClose = () => {
 <style scoped>
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
   backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 2000;
+  padding: 24px;
 }
 
 .modal {
-  background: white;
+  display: flex;
+  flex-direction: column;
+  width: min(80vw, 1280px);
+  height: min(90vh, 920px);
+  background: #fff;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
-  padding: 24px;
-  width: 90%;
-  max-width: 1000px;
-  max-height: 90vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+  overflow: hidden;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
 }
 
 .modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+  flex-shrink: 0;
+  padding: 16px 24px;
   border-bottom: 1px solid #e2e8f0;
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1rem;
+  font-weight: 500;
   color: #0f172a;
 }
 .close-btn {
+  width: 32px;
+  height: 32px;
   background: none;
   border: none;
-  font-size: 1.5rem;
+  border-radius: 8px;
+  font-size: 1.4rem;
+  line-height: 1;
   cursor: pointer;
   color: #64748b;
-  transition: color 0.2s;
 }
 
 .close-btn:hover {
   color: #ef4444;
+  background: #f8fafc;
 }
 
 .modal-two-columns {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.modal-left,
+.modal-right {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
   display: flex;
-  gap: 32px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
+  flex-direction: column;
 }
 
 .modal-left {
-  flex: 1;
-  min-width: 280px;
+  padding: 16px 24px;
+  overflow-x: hidden;
 }
 
 .modal-right {
-  flex: 1;
-  min-width: 280px;
-  display: flex;
-  flex-direction: column;
+  padding: 24px;
+  border-left: 1px solid #e2e8f0;
 }
 
 .form-group {
   margin-bottom: 16px;
 }
 
-.form-group label {
+.form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.form-label-row label {
+  margin-bottom: 0;
+}
+
+.form-group label,
+.modal-task-link-label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: #475569;
-  margin-bottom: 4px;
-  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.stage-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  padding: 4px 2px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #0f172a;
+  resize: none;
+  font-family: inherit;
+}
+
+.stage-name-input:focus {
+  outline: none;
+}
+
+.stage-description-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .form-group input,
 .form-group select,
-.form-group textarea {
+.form-group textarea:not(.stage-name-input) {
+  display: block;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 8px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -823,8 +888,15 @@ const handleClose = () => {
   transition: border-color 0.2s;
 }
 
+.form-group .stage-full-input {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .form-group input:focus,
-.form-group textarea:focus {
+.form-group textarea:not(.stage-name-input):focus {
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
@@ -979,53 +1051,69 @@ const handleClose = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .tasks-header-modal label {
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: #475569;
-  text-transform: uppercase;
+  color: #64748b;
 }
 
 .btn-add-task-modal {
-  background: #3b82f6;
-  color: white;
-  border: none;
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-size: 0.7rem;
+  background: #fff;
+  color: #2563eb;
+  border: 1px solid #93c5fd;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
 }
 
 .btn-add-task-modal:hover {
-  background: #2563eb;
+  background: #eff6ff;
 }
 
 .modal-tasks-list {
-  max-height: 400px;
-  overflow-y: auto;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #ffffff;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-tasks-list.is-empty {
+  min-height: 48px;
 }
 
 .modal-task-wrap {
-  border-bottom: 1px solid #e2e8f0;
+  position: relative;
 }
 
-.modal-task-wrap:last-child {
-  border-bottom: none;
+.modal-task-wrap + .modal-task-wrap {
+  box-shadow: inset 0 1px 0 #e2e8f0;
 }
 
 .modal-task-item {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.modal-task-item:hover {
+  background: #f8fafc;
+}
+
+.modal-task-item.is-active {
+  background: #eff6ff;
+}
+.modal-task-item :deep(.app-tooltip-trigger.is-fill) {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .modal-task-status {
@@ -1058,25 +1146,82 @@ const handleClose = () => {
 }
 
 .modal-task-title {
+  display: block;
+  min-width: 0;
+  width: 100%;
   font-size: 0.9rem;
-  color: #1e293b;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  flex: 1;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.modal-task-title:hover {
-  background: #e2e8f0;
-  color: #3b82f6;
+.modal-task-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
-.modal-task-title.has-link {
-  color: #1d4ed8;
-  text-decoration: underline;
+
+.modal-task-link {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
 }
-.modal-task-title.has-link:hover {
-  background: #eff6ff;
-  color: #1d4ed8;
+
+.modal-task-link:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.modal-task-link-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.task-status {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid #94a3b8;
+  border-radius: 50%;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.task-status:disabled { cursor: default; }
+.task-status_progress {
+  border-color: #3b82f6;
+  background: #3b82f6;
+  box-shadow: inset 0 0 0 3px #fff;
+}
+.task-status_done {
+  border-color: #22c55e;
+  background: #22c55e;
+  position: relative;
+}
+.task-status_done::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
 }
 
 .modal-task-effort {
@@ -1101,9 +1246,10 @@ const handleClose = () => {
 }
 
 .task-effort-value {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #f97316;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #64748b;
+  white-space: nowrap;
 }
 
 .modal-task-deps {
@@ -1233,19 +1379,18 @@ const handleClose = () => {
   color: #ef4444;
 }
 
-.modal-task-link-panel {
-  margin: 4px 0 2px;
-  padding: 4px 6px;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-}
-
 .modal-task-editor-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin: 4px 0 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.12),
+    0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
 .modal-task-dates-row {
@@ -1267,13 +1412,7 @@ const handleClose = () => {
 }
 
 .modal-task-link-label {
-  display: block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #475569;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .modal-task-link-label:first-child {
@@ -1323,9 +1462,11 @@ const handleClose = () => {
 
 .modal-task-editor-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  margin-top: 8px;
 }
 
 .btn-clear-link-inline {
@@ -1380,12 +1521,9 @@ const handleClose = () => {
 }
 
 .modal-tasks-empty {
-  padding: 40px 20px;
-  text-align: center;
-  color: #94a3b8;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  padding: 12px 8px;
+  color: #64748b;
+  font-size: 0.9rem;
 }
 
 .empty-hint {
@@ -1394,31 +1532,56 @@ const handleClose = () => {
 }
 
 .tasks-total-effort {
-  margin-top: 16px;
-  padding: 10px 14px;
-  background: #f8fafc;
-  border-radius: 10px;
+  margin-top: 8px;
+  padding: 16px 8px 0;
+  border-top: 1px solid #e2e8f0;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-  font-size: 0.8rem;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.total-label {
+  color: #64748b;
 }
 
 .total-value {
-  color: #f97316;
-  font-weight: 700;
-  font-size: 1rem;
+  color: #2563eb;
+  font-weight: 500;
 }
 
 .modal-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 20px;
-  padding-top: 16px;
+  flex-shrink: 0;
+  padding: 16px 24px;
   border-top: 1px solid #e2e8f0;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.modal-task-name-field {
+  resize: vertical;
+  min-height: 48px;
+}
+
+@media (max-width: 860px) {
+  .modal {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+  .modal-two-columns {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .modal-right {
+    border-left: none;
+    border-top: 1px solid #e2e8f0;
+  }
 }
 
 .btn {

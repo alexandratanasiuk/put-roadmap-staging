@@ -9,25 +9,17 @@
   >
     <div class="task-card-modal" @click.stop>
       <div class="task-card-modal-header">
-        <h4 class="task-card-title">
-          <svg class="task-card-title-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4.2 19.8l2.5-6.1L16.4 4l3.6 3.6-9.7 9.7-6.1 2.5z" fill="#4ea3e1" />
-            <path d="M15.8 4.6l1.9-1.9a1.8 1.8 0 0 1 2.6 0l1 1a1.8 1.8 0 0 1 0 2.6l-1.9 1.9-3.6-3.6z" fill="#2f5bd1" />
-            <path d="M17.6 3.8l2.6 2.6-1.8 1.8-2.6-2.6 1.8-1.8z" fill="#d5dbe5" />
-          </svg>
-          <span>Редактирование задачи</span>
-        </h4>
-        <button type="button" class="task-card-close" @click="emit('close')">×</button>
+        <h4 class="task-card-title">Редактирование элемента</h4>
+        <button type="button" class="task-card-close" aria-label="Закрыть" @click="emit('close')">×</button>
       </div>
 
       <div class="form-group">
-        <label>Название задачи</label>
-        <input
+        <textarea
           v-model="draft.title"
-          type="text"
-          class="task-card-input"
-          placeholder="Например: Подготовить ТЗ"
-        >
+          class="task-card-name"
+          rows="2"
+          placeholder="Название элемента"
+        ></textarea>
       </div>
 
       <div class="form-group">
@@ -39,15 +31,24 @@
             class="task-card-input"
             placeholder="https://..."
           >
+          <Tooltip label="Открыть ссылку">
+            <button
+              type="button"
+              class="task-card-link-btn"
+              :disabled="!normalizeLinkUrl(draft.linkUrl)"
+              aria-label="Открыть ссылку"
+              @click="openDraftLink"
+            >
+              <img :src="linkIcon" alt="" class="task-card-link-btn-icon">
+            </button>
+          </Tooltip>
           <button
+            v-if="draft.linkUrl"
             type="button"
-            class="task-card-link-btn"
-            :disabled="!normalizeLinkUrl(draft.linkUrl)"
-            title="Открыть ссылку"
-            @click="openDraftLink"
-          >
-            <img :src="linkIcon" alt="Открыть ссылку" class="task-card-link-btn-icon">
-          </button>
+            class="task-card-clear"
+            aria-label="Очистить ссылку"
+            @click="clearLink"
+          >×</button>
         </div>
       </div>
 
@@ -75,7 +76,7 @@
       </div>
 
       <div class="form-group">
-        <label>Оценка часов</label>
+        <label>Трудозатраты, ч</label>
         <input
           v-model.number="draft.effort"
           type="number"
@@ -88,9 +89,10 @@
 
       <div class="task-card-footer">
         <button type="button" class="btn btn-danger btn-delete-left" @click="emit('delete')">Удалить</button>
-        <button type="button" class="btn btn-text" @click="emit('close')">Отмена</button>
-        <button type="button" class="btn btn-clear-link" @click="clearLink">Очистить ссылку</button>
-        <button type="button" class="btn btn-secondary" @click="save">Сохранить</button>
+        <div class="task-card-footer-actions">
+          <button type="button" class="btn btn-text" @click="emit('close')">Отмена</button>
+          <button type="button" class="btn btn-secondary" @click="save">Сохранить</button>
+        </div>
       </div>
     </div>
   </div>
@@ -99,6 +101,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import linkIcon from '@/assets/link-icon.png'
+import Tooltip from './Tooltip.vue'
 
 // Карточка получает текущий этап и выбранную задачу для редактирования.
 const props = defineProps({
@@ -268,24 +271,26 @@ const save = () => {
   padding: 24px;
 }
 .task-card-modal {
-  width: min(680px, 100%);
+  width: min(560px, 100%);
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-  padding: 24px;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
+  padding: 0 0 8px;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
 }
 .task-card-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
+  margin-bottom: 8px;
+  padding: 16px 24px 12px;
   border-bottom: 1px solid #e2e8f0;
 }
 .task-card-modal-header h4 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
+  font-weight: 500;
   color: #0f172a;
 }
 .task-card-title {
@@ -293,11 +298,9 @@ const save = () => {
   align-items: center;
   gap: 8px;
 }
-.task-card-title-icon {
-  width: 16px;
-  height: 16px;
-  display: block;
-  flex-shrink: 0;
+.task-card-modal > .form-group,
+.task-card-modal > .form-row {
+  padding: 0 24px;
 }
 .task-card-close {
   width: 28px;
@@ -317,11 +320,26 @@ const save = () => {
 }
 .form-group label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: #475569;
-  text-transform: uppercase;
-  margin-bottom: 4px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+.task-card-name {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  padding: 4px 2px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #0f172a;
+  resize: none;
+  font-family: inherit;
+}
+.task-card-name:focus {
+  outline: none;
 }
 .task-card-input {
   width: 100%;
@@ -389,12 +407,34 @@ const save = () => {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
+.task-card-clear {
+  width: 32px;
+  height: 40px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.2rem;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.task-card-clear:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
 .task-card-footer {
   margin-top: 10px;
+  padding: 16px 24px 16px;
+  border-top: 1px solid #e2e8f0;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+.task-card-footer-actions {
+  display: flex;
+  gap: 10px;
 }
 .btn {
   border: 1px solid #3b82f6;
