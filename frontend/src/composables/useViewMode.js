@@ -5,6 +5,7 @@ const LS_KEY = 'roadmap-view-mode'
 
 const VALID_MODES = [
   'horizontal',
+  'tracker',
   'quarters',
   'months',
   'heatmap',

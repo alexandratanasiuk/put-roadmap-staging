@@ -84,6 +84,11 @@ export function useTasks() {
     }
   }
 
+  const normalizeTaskStatus = (status) => {
+    if (status === 'done' || status === 'progress') return status
+    return 'todo'
+  }
+
   // Создает новую задачу в конце списка этапа.
   const addTask = async (block) => {
     if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
@@ -114,6 +119,33 @@ export function useTasks() {
       const updatedTasks = previousTasks.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t))
       block.tasks = updatedTasks
       const response = await axios.post(apiPath(`/blocks/${block.id}/tasks/${task.id}/cycle-status`))
+      applyHydratedBlock(response.data)
+      return { success: true, block: response.data }
+    } catch (error) {
+      block.tasks = previousTasks
+      console.error('❌ Ошибка смены статуса:', error)
+      return { success: false, message: apiErrorMessage(error, 'Ошибка обновления статуса') }
+    } finally {
+      taskStatusUpdateInFlight.delete(inFlightKey)
+    }
+  }
+
+  // Прямая смена статуса (канбан): PATCH без цикла todo → progress → done.
+  const setTaskStatus = async (block, task, status) => {
+    if (!block?.id || !task?.id) return { success: false, message: 'Некорректные данные задачи' }
+    const nextStatus = normalizeTaskStatus(status)
+    const currentStatus = normalizeTaskStatus(task.status)
+    if (currentStatus === nextStatus) return { success: true, skipped: true }
+    const inFlightKey = `${String(block.id)}::${String(task.id)}`
+    if (taskStatusUpdateInFlight.has(inFlightKey)) {
+      return { success: false, busy: true }
+    }
+    if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
+    taskStatusUpdateInFlight.add(inFlightKey)
+    const previousTasks = Array.isArray(block.tasks) ? [...block.tasks] : []
+    try {
+      block.tasks = previousTasks.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t))
+      const response = await axios.patch(apiPath(`/blocks/${block.id}/tasks/${task.id}`), { status: nextStatus })
       applyHydratedBlock(response.data)
       return { success: true, block: response.data }
     } catch (error) {
@@ -213,14 +245,27 @@ export function useTasks() {
     const { startDate, releaseDate } = normalizeTaskDates(patch?.startDate, patch?.releaseDate)
     const title = String(patch?.title || '').trim()
     try {
-      const response = await axios.patch(apiPath(`/blocks/${block.id}/tasks/${task.id}`), {
+      const payload = {
         title: title || task.title || 'Новая задача',
         linkUrl: normalizeLinkUrl(patch?.linkUrl || ''),
         linkNote: String(patch?.linkNote || '').trim(),
         startDate,
         releaseDate,
         effort: Math.max(0, Number(patch?.effort) || 0)
-      })
+      }
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'status')) {
+        payload.status = normalizeTaskStatus(patch.status)
+      }
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'description')) {
+        payload.description = String(patch.description || '')
+      }
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'owner')) {
+        payload.owner = String(patch.owner || '')
+      }
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'ownerUsername')) {
+        payload.ownerUsername = String(patch.ownerUsername || '')
+      }
+      const response = await axios.patch(apiPath(`/blocks/${block.id}/tasks/${task.id}`), payload)
       applyHydratedBlock(response.data)
       return { success: true, block: response.data }
     } catch (error) {
@@ -369,6 +414,7 @@ export function useTasks() {
     getStatusTitle,
     addTask,
     cycleTaskStatus,
+    setTaskStatus,
     deleteTask,
     startTaskEdit,
     saveTaskEdit,

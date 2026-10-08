@@ -22,6 +22,30 @@
         ></textarea>
       </div>
 
+      <div class="form-row">
+        <div class="form-group">
+          <label>Статус</label>
+          <AppSelect
+            v-model="draft.status"
+            :options="statusOptions"
+          />
+        </div>
+        <div class="form-group">
+          <label>Этап</label>
+          <div class="task-card-static">{{ block?.title || '—' }}</div>
+        </div>
+      </div>
+
+      <div v-if="showDescription" class="form-group">
+        <label>Описание</label>
+        <textarea
+          v-model="draft.description"
+          class="task-card-textarea"
+          rows="4"
+          placeholder="Описание элемента"
+        ></textarea>
+      </div>
+
       <div class="form-group">
         <label>Ссылка</label>
         <div class="task-card-link-row">
@@ -87,6 +111,15 @@
         >
       </div>
 
+      <div v-if="showOwner" class="form-group">
+        <label>Исполнитель</label>
+        <AppSelect
+          v-model="draft.owner"
+          :options="ownerOptions"
+          placeholder="Не назначен"
+        />
+      </div>
+
       <div class="task-card-footer">
         <button type="button" class="btn btn-danger btn-delete-left" @click="emit('delete')">Удалить</button>
         <div class="task-card-footer-actions">
@@ -99,8 +132,11 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import axios from 'axios'
 import linkIcon from '@/assets/link-icon.png'
+import { useAuth } from '@/composables/useAuth'
+import AppSelect from './AppSelect.vue'
 import Tooltip from './Tooltip.vue'
 
 // Карточка получает текущий этап и выбранную задачу для редактирования.
@@ -113,8 +149,42 @@ const props = defineProps({
 const emit = defineEmits(['close', 'save', 'delete'])
 
 // Локальный draft формы: редактируем его, а наверх отправляем только на Save.
+const { API_URL } = useAuth()
+
+const hasHydrateKey = (obj, key) => Boolean(obj && Object.prototype.hasOwnProperty.call(obj, key))
+const ownerKey = computed(() => {
+  if (hasHydrateKey(props.task, 'ownerUsername')) return 'ownerUsername'
+  if (hasHydrateKey(props.task, 'owner')) return 'owner'
+  return ''
+})
+const showOwner = computed(() => Boolean(ownerKey.value))
+const showDescription = computed(() => hasHydrateKey(props.task, 'description'))
+
+const statusOptions = [
+  { value: 'todo', label: 'Не начато' },
+  { value: 'progress', label: 'В работе' },
+  { value: 'done', label: 'Выполнено' }
+]
+
+const owners = ref([])
+const ownerOptions = computed(() => {
+  const options = [{ value: '', label: 'Не назначен' }]
+  for (const user of owners.value || []) {
+    const username = String(user?.username || '').trim()
+    if (!username) continue
+    options.push({
+      value: username,
+      label: `${username}${user.role === 'admin' ? ' (admin)' : ''}`
+    })
+  }
+  return options
+})
+
 const draft = ref({
   title: '',
+  status: 'todo',
+  description: '',
+  owner: '',
   linkUrl: '',
   linkNote: '',
   startDate: '',
@@ -176,8 +246,13 @@ watch(
   () => {
     if (!props.task) return
     const { startDate, releaseDate } = normalizeTaskDates(props.task.startDate, props.task.releaseDate)
+    const key = ownerKey.value
+    const ownerValue = key ? String(props.task[key] || '') : ''
     draft.value = {
       title: props.task.title || '',
+      status: props.task.status === 'done' || props.task.status === 'progress' ? props.task.status : 'todo',
+      description: typeof props.task.description === 'string' ? props.task.description : '',
+      owner: ownerValue,
       linkUrl: props.task.linkUrl || '',
       linkNote: typeof props.task.linkNote === 'string' ? props.task.linkNote : '',
       startDate,
@@ -247,15 +322,30 @@ const save = () => {
   // На сохранение отправляем уже нормализованные значения.
   const { startDate, releaseDate } = normalizeTaskDates(draft.value.startDate, draft.value.releaseDate)
   const title = String(draft.value.title || '').trim()
-  emit('save', {
+  const payload = {
     title: title || String(props.task?.title || '').trim() || 'Новая задача',
+    status: draft.value.status === 'done' || draft.value.status === 'progress' ? draft.value.status : 'todo',
     linkUrl: normalizeLinkUrl(draft.value.linkUrl),
     linkNote: String(draft.value.linkNote || '').trim(),
     startDate,
     releaseDate,
     effort: Math.max(0, Number(draft.value.effort) || 0)
-  })
+  }
+  if (showDescription.value) payload.description = String(draft.value.description || '')
+  if (showOwner.value && ownerKey.value) payload[ownerKey.value] = String(draft.value.owner || '')
+  emit('save', payload)
 }
+
+onMounted(async () => {
+  if (!showOwner.value) return
+  try {
+    const response = await axios.get(`${API_URL}/users`, { timeout: 12000 })
+    owners.value = Array.isArray(response.data) ? response.data : []
+  } catch (error) {
+    console.error('❌ Ошибка загрузки исполнителей:', error)
+    owners.value = []
+  }
+})
 </script>
 
 <style scoped>
@@ -272,6 +362,8 @@ const save = () => {
 }
 .task-card-modal {
   width: min(560px, 100%);
+  max-height: min(92vh, 860px);
+  overflow: auto;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -406,6 +498,20 @@ const save = () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
+}
+.task-card-static {
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .task-card-clear {
   width: 32px;

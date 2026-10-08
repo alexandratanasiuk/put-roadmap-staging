@@ -62,6 +62,12 @@
           :key="'table-'+currentViewMode"
           @editBlock="openEditModal"
         />
+        <TrackerView
+          v-else-if="currentViewMode === 'tracker'"
+          :key="'tracker-'+currentViewMode"
+          class="main-view-fill"
+          @editBlock="openEditModal"
+        />
         <div v-else-if="showUnknownViewModePlaceholder" class="empty-state">
           Выберите режим отображения
         </div>
@@ -105,6 +111,7 @@ import RoadmapCanvas from '@/components/views/RoadmapCanvas.vue'
 import UsersTestDirectoryView from '@/components/views/UsersTestDirectoryView.vue'
 import WorkspaceView from '@/components/views/WorkspaceView.vue'
 import TableView from '@/components/views/TableView.vue'
+import TrackerView from '@/components/views/TrackerView.vue'
 import AssistantView from '@/components/views/AssistantView.vue'
 import FloatingAssistantDock from '@/components/assistant/FloatingAssistantDock.vue'
 import ModalEditBlock from '@/components/common/ModalEditBlock.vue'
@@ -159,6 +166,7 @@ const KNOWN_MAIN_VIEW_MODES = new Set([
   'users',
   'workspace',
   'table',
+  'tracker',
   'assistant'
 ])
 

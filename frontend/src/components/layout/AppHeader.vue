@@ -201,14 +201,14 @@
           + Новый этап
         </button>
         <button
-          v-if="!isReadOnly && viewMode !== 'users' && viewMode !== 'workspace' && viewMode !== 'table' && viewMode !== 'assistant'"
+          v-if="!isReadOnly && viewMode !== 'users' && viewMode !== 'workspace' && viewMode !== 'table' && viewMode !== 'assistant' && viewMode !== 'tracker'"
           class="btn"
           @click="$emit('export-png')"
         >
           📸 PNG
         </button>
         <button
-          v-if="!isReadOnly && viewMode !== 'users' && viewMode !== 'workspace' && viewMode !== 'table' && viewMode !== 'assistant'"
+          v-if="!isReadOnly && viewMode !== 'users' && viewMode !== 'workspace' && viewMode !== 'table' && viewMode !== 'assistant' && viewMode !== 'tracker'"
           class="btn"
           @click="$emit('export-pdf')"
         >
@@ -228,7 +228,8 @@
         viewMode !== 'users' &&
         viewMode !== 'workspace' &&
         viewMode !== 'table' &&
-        viewMode !== 'assistant'
+        viewMode !== 'assistant' &&
+        viewMode !== 'tracker'
       "
     >
       <div class="stat-item">
@@ -318,6 +319,7 @@ const emit = defineEmits([
 const TOOLBAR_TAB_ORDER_KEY_PREFIX = 'roadmap-toolbar-tab-order:'
 const DEFAULT_TAB_ORDER = [
   'horizontal',
+  'tracker',
   'quarters',
   'heatmap',
   'gantt',
@@ -329,6 +331,7 @@ const DEFAULT_TAB_ORDER = [
 ]
 const TAB_DEFINITIONS = {
   horizontal: { id: 'horizontal', icon: '📅', label: 'По месяцам' },
+  tracker: { id: 'tracker', icon: '🗂️', label: 'Трекер' },
   quarters: { id: 'quarters', icon: '📊', label: 'По кварталам' },
   heatmap: { id: 'heatmap', icon: '🔥', label: 'Тепловая карта' },
   gantt: { id: 'gantt', icon: '📈', iconSrc: ganttIcon, label: 'Диаграмма Ганта' },
@@ -444,7 +447,14 @@ const normalizeTabOrder = (rawOrder) => {
   const list = Array.isArray(rawOrder) ? rawOrder : []
   const uniqueKnown = list.filter((id, idx) => DEFAULT_TAB_ORDER.includes(id) && list.indexOf(id) === idx)
   DEFAULT_TAB_ORDER.forEach((id) => {
-    if (!uniqueKnown.includes(id)) uniqueKnown.push(id)
+    if (uniqueKnown.includes(id)) return
+    if (id === 'tracker') {
+      const after = uniqueKnown.indexOf('horizontal')
+      if (after >= 0) uniqueKnown.splice(after + 1, 0, id)
+      else uniqueKnown.push(id)
+      return
+    }
+    uniqueKnown.push(id)
   })
   return uniqueKnown
 }
