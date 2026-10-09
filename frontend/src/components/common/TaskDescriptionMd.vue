@@ -48,18 +48,22 @@
     ></textarea>
     <div
       v-show="preview"
+      ref="previewRoot"
       class="md-preview"
       title="Двойной клик — правка"
       v-html="previewHtml"
       @dblclick="focusTextarea"
+      @paste="$emit('paste', $event)"
     ></div>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import axios from 'axios'
+import { useAuth } from '@/composables/useAuth'
 import hljs from 'highlight.js/lib/core'
 import sql from 'highlight.js/lib/languages/sql'
 import javascript from 'highlight.js/lib/languages/javascript'
@@ -79,16 +83,21 @@ hljs.registerLanguage('shell', bash)
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
+  blockId: { type: [String, Number], default: '' },
+  taskId: { type: [String, Number], default: '' },
   placeholder: {
     type: String,
-    default: 'Описание в Markdown. Можно перетащить файл или вставить его из буфера.'
+    default: 'Описание в Markdown. Картинку можно вставить из буфера или перетащить сюда.'
   }
 })
 
 const emit = defineEmits(['update:modelValue', 'paste'])
 
+const { API_URL } = useAuth()
 const textareaRef = ref(null)
+const previewRoot = ref(null)
 const preview = ref(true)
+const attachmentUrls = new Map()
 
 const escapeHtml = (value) =>
   String(value)
@@ -113,6 +122,12 @@ const highlightCode = (code, lang) => {
   }
 }
 
+const safeImageUrl = (href) => {
+  const url = String(href || '').trim()
+  if (/^https?:\/\//i.test(url)) return url
+  return ''
+}
+
 marked.use({
   gfm: true,
   breaks: true,
@@ -124,6 +139,16 @@ marked.use({
         ? `hljs language-${escapeHtml(language)}`
         : 'hljs'
       return `<pre><code class="${className}">${highlighted}</code></pre>\n`
+    },
+    image({ href, text }) {
+      const alt = escapeHtml(text || 'изображение')
+      const attachment = String(href || '').trim().match(/^attachment:([A-Za-z0-9_-]+)$/i)
+      if (attachment) {
+        return `<img data-file-id="${escapeHtml(attachment[1])}" alt="${alt}" class="md-image is-loading">`
+      }
+      const src = safeImageUrl(href)
+      if (!src) return ''
+      return `<img src="${escapeHtml(src)}" alt="${alt}" class="md-image" loading="lazy">`
     }
   }
 })
@@ -132,9 +157,78 @@ const previewHtml = computed(() => {
   const raw = String(props.modelValue || '').trim()
   if (!raw) return '<p class="md-empty">Нет описания</p>'
   return DOMPurify.sanitize(marked.parse(raw), {
-    ADD_ATTR: ['class']
+    ADD_ATTR: ['class', 'data-file-id', 'loading']
   })
 })
+
+const revokeAttachmentUrls = () => {
+  const previous = [...attachmentUrls.values()]
+  attachmentUrls.clear()
+  for (const value of previous) {
+    Promise.resolve(value).then((url) => {
+      if (typeof url === 'string' && url.startsWith('blob:')) URL.revokeObjectURL(url)
+    })
+  }
+}
+
+const loadAttachmentUrl = (fileId) => {
+  const key = `${props.blockId}:${props.taskId}:${fileId}`
+  if (attachmentUrls.has(key)) return attachmentUrls.get(key)
+  if (!props.blockId || !props.taskId) return Promise.resolve('')
+  const pending = axios
+    .get(`${API_URL}/blocks/${props.blockId}/tasks/${props.taskId}/files/${fileId}`, {
+      responseType: 'blob',
+      timeout: 180000
+    })
+    .then((response) => {
+      const type = String(response.data?.type || '')
+      if (!type.startsWith('image/') || type === 'image/svg+xml') return ''
+      const url = URL.createObjectURL(response.data)
+      if (!attachmentUrls.has(key)) {
+        URL.revokeObjectURL(url)
+        return ''
+      }
+      attachmentUrls.set(key, url)
+      return url
+    })
+    .catch(() => {
+      attachmentUrls.delete(key)
+      return ''
+    })
+  attachmentUrls.set(key, pending)
+  return pending
+}
+
+const hydrateImages = async () => {
+  await nextTick()
+  const root = previewRoot.value
+  if (!root || !preview.value) return
+  const nodes = [...root.querySelectorAll('img[data-file-id]')]
+  await Promise.all(nodes.map(async (img) => {
+    const fileId = img.getAttribute('data-file-id')
+    if (!fileId) return
+    const url = await loadAttachmentUrl(fileId)
+    if (!img.isConnected) return
+    if (!url) {
+      img.classList.remove('is-loading')
+      img.classList.add('is-broken')
+      img.alt = 'Не удалось показать изображение'
+      return
+    }
+    img.src = url
+    img.classList.remove('is-loading')
+  }))
+}
+
+watch(
+  () => [previewHtml.value, preview.value, props.blockId, props.taskId],
+  async (next, prev) => {
+    if (prev && (prev[2] !== next[2] || prev[3] !== next[3])) revokeAttachmentUrls()
+    await hydrateImages()
+  }
+)
+onMounted(hydrateImages)
+onBeforeUnmount(revokeAttachmentUrls)
 
 const onInput = (event) => {
   emit('update:modelValue', event.target.value)
@@ -215,6 +309,24 @@ const prefixLine = async (prefix) => {
   await applyValue(next, lineStart, lineStart + replaced.length)
 }
 
+const insertMarkdown = async (snippet, { showPreview = false } = {}) => {
+  const piece = String(snippet || '').replace(/^\n+/, '').replace(/\n+$/, '')
+  if (!piece) return
+  const value = String(props.modelValue || '')
+  if (preview.value) {
+    const base = value.replace(/\s+$/, '')
+    emit('update:modelValue', `${base}${base ? '\n\n' : ''}${piece}\n`)
+  } else {
+    const el = textareaRef.value
+    const start = el?.selectionStart ?? value.length
+    const end = el?.selectionEnd ?? value.length
+    const next = value.slice(0, start) + piece + value.slice(end)
+    const cursor = start + piece.length
+    await applyValue(next, cursor, cursor)
+  }
+  if (showPreview) preview.value = true
+}
+
 const insertLink = async () => {
   await focusTextarea()
   const el = textareaRef.value
@@ -228,6 +340,8 @@ const insertLink = async () => {
   const urlStart = start + selected.length + 3
   await applyValue(next, urlStart, urlStart + 'https://'.length)
 }
+
+defineExpose({ insertMarkdown })
 </script>
 
 <style scoped>
@@ -400,5 +514,21 @@ const insertLink = async () => {
 .md-preview :deep(.md-empty) {
   margin: 0;
   color: #94a3b8;
+}
+.md-preview :deep(img.md-image) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.4em 0 0.8em;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.md-preview :deep(img.md-image.is-loading),
+.md-preview :deep(img.md-image.is-broken) {
+  min-height: 72px;
+  padding: 12px;
+  color: #64748b;
+  font-size: 0.85rem;
 }
 </style>

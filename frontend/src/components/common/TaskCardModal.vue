@@ -57,8 +57,11 @@
             @drop.prevent="onFileDrop"
           >
             <TaskDescriptionMd
+              ref="descriptionRef"
               :key="`${block?.id}-${task?.id}`"
               v-model="draft.description"
+              :block-id="block?.id"
+              :task-id="task?.id"
               @paste="onDescriptionPaste"
             />
             <div v-if="fileDropOver" class="desc-drop-overlay">Перетащите файл сюда</div>
@@ -190,7 +193,30 @@ const draft = ref({
 })
 
 const attachmentsRef = ref(null)
+const descriptionRef = ref(null)
 const fileDropOver = ref(false)
+
+const isRasterImage = (file) => {
+  const mime = String(file?.mime || file?.type || '').toLowerCase()
+  return mime.startsWith('image/') && mime !== 'image/svg+xml'
+}
+
+const clipboardFiles = (clipboardData) => {
+  const files = [...(clipboardData?.files || [])]
+  if (files.length) return files
+  return [...(clipboardData?.items || [])]
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter(Boolean)
+}
+
+const namedImageFile = (file) => {
+  const name = String(file?.name || '').trim()
+  if (name && !/^image\./i.test(name)) return file
+  const subtype = String(file.type || 'image/png').split('/')[1] || 'png'
+  const ext = subtype === 'jpeg' ? 'jpg' : subtype
+  return new File([file], `screenshot.${ext}`, { type: file.type || 'image/png' })
+}
 const descriptionCopied = ref(false)
 
 // Нужен, чтобы клик по затемненному фону закрывал модалку,
@@ -261,7 +287,17 @@ watch(
   { immediate: true, deep: true }
 )
 
-const uploadDroppedFiles = (fileList) => attachmentsRef.value?.uploadFiles(fileList)
+const uploadDroppedFiles = async (fileList, { inlineImages = false } = {}) => {
+  const files = [...(fileList || [])].map((file) => (isRasterImage(file) ? namedImageFile(file) : file))
+  const uploaded = await attachmentsRef.value?.uploadFiles(files)
+  if (!inlineImages || !Array.isArray(uploaded)) return
+  const images = uploaded.filter((file) => isRasterImage(file) && file.id)
+  if (!images.length) return
+  const markdown = images
+    .map((file) => `![${file.fileName || 'изображение'}](attachment:${file.id})`)
+    .join('\n\n')
+  await descriptionRef.value?.insertMarkdown(markdown, { showPreview: true })
+}
 
 // Быстрые действия над ссылкой.
 const clearLink = () => {
@@ -354,14 +390,14 @@ const onFileDragLeave = (event) => {
 
 const onFileDrop = async (event) => {
   fileDropOver.value = false
-  await uploadDroppedFiles(event.dataTransfer?.files)
+  await uploadDroppedFiles(event.dataTransfer?.files, { inlineImages: true })
 }
 
 const onDescriptionPaste = async (event) => {
-  const files = [...(event.clipboardData?.files || [])]
+  const files = clipboardFiles(event.clipboardData)
   if (!files.length) return
   event.preventDefault()
-  await uploadDroppedFiles(files)
+  await uploadDroppedFiles(files, { inlineImages: true })
 }
 </script>
 

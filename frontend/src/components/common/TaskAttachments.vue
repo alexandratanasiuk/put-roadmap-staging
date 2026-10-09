@@ -85,6 +85,7 @@ const uploadFiles = async (fileList) => {
   if (!files.length) return
   fileError.value = ''
   fileUploading.value = true
+  const uploaded = []
   try {
     for (const file of files) {
       if (file.size > FILE_LIMIT) {
@@ -92,7 +93,7 @@ const uploadFiles = async (fileList) => {
         continue
       }
       if (!file.size) continue
-      await axios.post(path, file, {
+      const response = await axios.post(path, file, {
         timeout: 180000,
         headers: {
           'Content-Type': 'application/octet-stream',
@@ -101,6 +102,7 @@ const uploadFiles = async (fileList) => {
         },
         transformRequest: [(data) => data]
       })
+      if (response?.data?.id) uploaded.push(response.data)
     }
     await loadAttachments()
   } catch (error) {
@@ -108,6 +110,7 @@ const uploadFiles = async (fileList) => {
   } finally {
     fileUploading.value = false
   }
+  return uploaded
 }
 
 const onFileInput = async (event) => {
