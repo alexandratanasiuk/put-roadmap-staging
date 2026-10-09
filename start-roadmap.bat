@@ -161,6 +161,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo [STEP] SQL 08-task-files.sql
+"%PSQL%" -X -P pager=off -h %PGHOST% -p %PGPORT% -U %PGUSER% -d %PGDATABASE% -v ON_ERROR_STOP=1 -f "%SQLDIR%\08-task-files.sql"
+if errorlevel 1 (
+  echo [ERROR] 08-task-files.sql failed
+  pause
+  exit /b 1
+)
+
 echo [INFO] Skip SQL 02-migrate-json.sql / 03-verify.sql: tables are source of truth, stale JSON must not reload them.
 
 echo.

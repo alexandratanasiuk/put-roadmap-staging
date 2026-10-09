@@ -216,6 +216,11 @@
                   placeholder="0"
                 >
 
+                <TaskAttachments
+                  :block-id="editingBlock.id"
+                  :task-id="task.id"
+                />
+
                 <div class="modal-task-editor-actions">
                   <button type="button" class="btn btn-danger" @click="deleteTaskInModal(task)">
                     Удалить
@@ -263,6 +268,7 @@ import {
 } from '@/utils/taskModel'
 import Tooltip from './Tooltip.vue'
 import AppSelect from './AppSelect.vue'
+import TaskAttachments from './TaskAttachments.vue'
 import linkIcon from '@/assets/link-icon.png'
 
 // Модалка редактирует один этап целиком (поля этапа + вложенные задачи).

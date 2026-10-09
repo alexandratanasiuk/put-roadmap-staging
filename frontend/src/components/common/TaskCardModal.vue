@@ -9,115 +9,139 @@
   >
     <div class="task-card-modal" @click.stop>
       <div class="task-card-modal-header">
-        <h4 class="task-card-title">Редактирование элемента</h4>
+        <h4 class="task-card-title">Элемент этапа</h4>
         <button type="button" class="task-card-close" aria-label="Закрыть" @click="emit('close')">×</button>
       </div>
 
-      <div class="form-group">
-        <textarea
-          v-model="draft.title"
-          class="task-card-name"
-          rows="2"
-          placeholder="Название элемента"
-        ></textarea>
-      </div>
+      <div class="task-card-body">
+        <div class="task-card-main">
+          <textarea
+            v-model="draft.title"
+            class="task-card-name"
+            rows="2"
+            placeholder="Название элемента"
+          ></textarea>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label>Статус</label>
-          <AppSelect
-            v-model="draft.status"
-            :options="statusOptions"
-          />
-        </div>
-        <div class="form-group">
-          <label>Этап</label>
-          <div class="task-card-static">{{ block?.title || '—' }}</div>
-        </div>
-      </div>
+          <div class="desc-head">
+            <div class="desc-head-label">
+              <span>Описание</span>
+              <Tooltip :label="descriptionCopied ? 'Скопировано' : 'Копировать описание'">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  :disabled="!String(draft.description || '').trim()"
+                  aria-label="Копировать описание"
+                  @click="copyDescription"
+                >
+                  <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                    <rect x="7" y="7" width="9" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M5 13H4.5A1.5 1.5 0 0 1 3 11.5v-8A1.5 1.5 0 0 1 4.5 2h8A1.5 1.5 0 0 1 14 3.5V5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                  </svg>
+                </button>
+              </Tooltip>
+            </div>
+            <Tooltip label="Прикрепить файл">
+              <button type="button" class="icon-btn" aria-label="Прикрепить файл" @click="attachmentsRef?.openFilePicker()">
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                  <path d="M7.5 10.5 12 6a2.5 2.5 0 0 1 3.5 3.5l-6.2 6.2a3.5 3.5 0 0 1-5-5L10 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </Tooltip>
+          </div>
 
-      <div v-if="showDescription" class="form-group">
-        <label>Описание</label>
-        <textarea
-          v-model="draft.description"
-          class="task-card-textarea"
-          rows="4"
-          placeholder="Описание элемента"
-        ></textarea>
-      </div>
-
-      <div class="form-group">
-        <label>Ссылка</label>
-        <div class="task-card-link-row">
-          <input
-            v-model="draft.linkUrl"
-            type="url"
-            class="task-card-input"
-            placeholder="https://..."
+          <div
+            class="desc-drop"
+            :class="{ 'is-over': fileDropOver }"
+            @dragover.prevent="fileDropOver = true"
+            @dragleave="onFileDragLeave"
+            @drop.prevent="onFileDrop"
           >
-          <Tooltip label="Открыть ссылку">
-            <button
-              type="button"
-              class="task-card-link-btn"
-              :disabled="!normalizeLinkUrl(draft.linkUrl)"
-              aria-label="Открыть ссылку"
-              @click="openDraftLink"
+            <TaskDescriptionMd
+              :key="`${block?.id}-${task?.id}`"
+              v-model="draft.description"
+              @paste="onDescriptionPaste"
+            />
+            <div v-if="fileDropOver" class="desc-drop-overlay">Перетащите файл сюда</div>
+          </div>
+        </div>
+
+        <aside class="task-card-side">
+          <div class="form-group">
+            <label>Статус</label>
+            <AppSelect v-model="draft.status" :options="statusOptions" />
+          </div>
+          <div class="form-group">
+            <label>Этап</label>
+            <div class="task-card-static">{{ block?.title || '—' }}</div>
+          </div>
+          <div class="side-attachments">
+            <TaskAttachments
+              ref="attachmentsRef"
+              :block-id="block?.id"
+              :task-id="task?.id"
+            />
+          </div>
+          <div class="form-group">
+            <label>Дата начала</label>
+            <input
+              v-model="draft.startDate"
+              type="date"
+              class="task-card-input"
+              :min="startMinDate"
+              :max="startMaxDate"
             >
-              <img :src="linkIcon" alt="" class="task-card-link-btn-icon">
-            </button>
-          </Tooltip>
-          <button
-            v-if="draft.linkUrl"
-            type="button"
-            class="task-card-clear"
-            aria-label="Очистить ссылку"
-            @click="clearLink"
-          >×</button>
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label>Дата начала</label>
-          <input
-            v-model="draft.startDate"
-            type="date"
-            class="task-card-input"
-            :min="startMinDate"
-            :max="startMaxDate"
-          >
-        </div>
-        <div class="form-group">
-          <label>Дата окончания</label>
-          <input
-            v-model="draft.releaseDate"
-            type="date"
-            class="task-card-input"
-            :min="endMinDate"
-            :max="endMaxDate"
-          >
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Трудозатраты, ч</label>
-        <input
-          v-model.number="draft.effort"
-          type="number"
-          min="0"
-          step="1"
-          class="task-card-input"
-          placeholder="0"
-        >
-      </div>
-
-      <div v-if="showOwner" class="form-group">
-        <label>Исполнитель</label>
-        <AppSelect
-          v-model="draft.owner"
-          :options="ownerOptions"
-          placeholder="Не назначен"
-        />
+          </div>
+          <div class="form-group">
+            <label>Дата окончания</label>
+            <input
+              v-model="draft.releaseDate"
+              type="date"
+              class="task-card-input"
+              :min="endMinDate"
+              :max="endMaxDate"
+            >
+          </div>
+          <div class="form-group">
+            <label>Трудозатраты, ч</label>
+            <input
+              v-model.number="draft.effort"
+              type="number"
+              min="0"
+              step="1"
+              class="task-card-input"
+              placeholder="0"
+            >
+          </div>
+          <div class="form-group">
+            <label>Ссылка</label>
+            <div class="task-card-link-row">
+              <input
+                v-model="draft.linkUrl"
+                type="url"
+                class="task-card-input"
+                placeholder="https://..."
+              >
+              <Tooltip label="Открыть ссылку">
+                <button
+                  type="button"
+                  class="task-card-link-btn"
+                  :disabled="!normalizeLinkUrl(draft.linkUrl)"
+                  aria-label="Открыть ссылку"
+                  @click="openDraftLink"
+                >
+                  <img :src="linkIcon" alt="" class="task-card-link-btn-icon">
+                </button>
+              </Tooltip>
+              <button
+                v-if="draft.linkUrl"
+                type="button"
+                class="task-card-clear"
+                aria-label="Очистить ссылку"
+                @click="clearLink"
+              >×</button>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <div class="task-card-footer">
@@ -132,11 +156,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import axios from 'axios'
+import { computed, ref, watch } from 'vue'
 import linkIcon from '@/assets/link-icon.png'
-import { useAuth } from '@/composables/useAuth'
 import AppSelect from './AppSelect.vue'
+import TaskAttachments from './TaskAttachments.vue'
+import TaskDescriptionMd from './TaskDescriptionMd.vue'
 import Tooltip from './Tooltip.vue'
 
 // Карточка получает текущий этап и выбранную задачу для редактирования.
@@ -148,49 +172,26 @@ const props = defineProps({
 // close — закрыть без сохранения, save — применить изменения, delete — удалить задачу.
 const emit = defineEmits(['close', 'save', 'delete'])
 
-// Локальный draft формы: редактируем его, а наверх отправляем только на Save.
-const { API_URL } = useAuth()
-
-const hasHydrateKey = (obj, key) => Boolean(obj && Object.prototype.hasOwnProperty.call(obj, key))
-const ownerKey = computed(() => {
-  if (hasHydrateKey(props.task, 'ownerUsername')) return 'ownerUsername'
-  if (hasHydrateKey(props.task, 'owner')) return 'owner'
-  return ''
-})
-const showOwner = computed(() => Boolean(ownerKey.value))
-const showDescription = computed(() => hasHydrateKey(props.task, 'description'))
-
 const statusOptions = [
   { value: 'todo', label: 'Не начато' },
   { value: 'progress', label: 'В работе' },
   { value: 'done', label: 'Выполнено' }
 ]
 
-const owners = ref([])
-const ownerOptions = computed(() => {
-  const options = [{ value: '', label: 'Не назначен' }]
-  for (const user of owners.value || []) {
-    const username = String(user?.username || '').trim()
-    if (!username) continue
-    options.push({
-      value: username,
-      label: `${username}${user.role === 'admin' ? ' (admin)' : ''}`
-    })
-  }
-  return options
-})
-
 const draft = ref({
   title: '',
   status: 'todo',
   description: '',
-  owner: '',
   linkUrl: '',
   linkNote: '',
   startDate: '',
   releaseDate: '',
   effort: 0
 })
+
+const attachmentsRef = ref(null)
+const fileDropOver = ref(false)
+const descriptionCopied = ref(false)
 
 // Нужен, чтобы клик по затемненному фону закрывал модалку,
 // а drag/свайп по оверлею случайно не закрывал.
@@ -246,13 +247,10 @@ watch(
   () => {
     if (!props.task) return
     const { startDate, releaseDate } = normalizeTaskDates(props.task.startDate, props.task.releaseDate)
-    const key = ownerKey.value
-    const ownerValue = key ? String(props.task[key] || '') : ''
     draft.value = {
       title: props.task.title || '',
       status: props.task.status === 'done' || props.task.status === 'progress' ? props.task.status : 'todo',
       description: typeof props.task.description === 'string' ? props.task.description : '',
-      owner: ownerValue,
       linkUrl: props.task.linkUrl || '',
       linkNote: typeof props.task.linkNote === 'string' ? props.task.linkNote : '',
       startDate,
@@ -262,6 +260,8 @@ watch(
   },
   { immediate: true, deep: true }
 )
+
+const uploadDroppedFiles = (fileList) => attachmentsRef.value?.uploadFiles(fileList)
 
 // Быстрые действия над ссылкой.
 const clearLink = () => {
@@ -319,33 +319,50 @@ const onOverlayPointerCancel = () => {
 }
 
 const save = () => {
-  // На сохранение отправляем уже нормализованные значения.
   const { startDate, releaseDate } = normalizeTaskDates(draft.value.startDate, draft.value.releaseDate)
   const title = String(draft.value.title || '').trim()
-  const payload = {
+  emit('save', {
     title: title || String(props.task?.title || '').trim() || 'Новая задача',
     status: draft.value.status === 'done' || draft.value.status === 'progress' ? draft.value.status : 'todo',
+    description: String(draft.value.description || ''),
     linkUrl: normalizeLinkUrl(draft.value.linkUrl),
     linkNote: String(draft.value.linkNote || '').trim(),
     startDate,
     releaseDate,
     effort: Math.max(0, Number(draft.value.effort) || 0)
-  }
-  if (showDescription.value) payload.description = String(draft.value.description || '')
-  if (showOwner.value && ownerKey.value) payload[ownerKey.value] = String(draft.value.owner || '')
-  emit('save', payload)
+  })
 }
 
-onMounted(async () => {
-  if (!showOwner.value) return
+const copyDescription = async () => {
+  const text = String(draft.value.description || '').trim()
+  if (!text) return
   try {
-    const response = await axios.get(`${API_URL}/users`, { timeout: 12000 })
-    owners.value = Array.isArray(response.data) ? response.data : []
-  } catch (error) {
-    console.error('❌ Ошибка загрузки исполнителей:', error)
-    owners.value = []
+    await navigator.clipboard.writeText(text)
+    descriptionCopied.value = true
+    window.setTimeout(() => {
+      descriptionCopied.value = false
+    }, 1200)
+  } catch {
+    descriptionCopied.value = false
   }
-})
+}
+
+const onFileDragLeave = (event) => {
+  if (event.currentTarget?.contains?.(event.relatedTarget)) return
+  fileDropOver.value = false
+}
+
+const onFileDrop = async (event) => {
+  fileDropOver.value = false
+  await uploadDroppedFiles(event.dataTransfer?.files)
+}
+
+const onDescriptionPaste = async (event) => {
+  const files = [...(event.clipboardData?.files || [])]
+  if (!files.length) return
+  event.preventDefault()
+  await uploadDroppedFiles(files)
+}
 </script>
 
 <style scoped>
@@ -361,15 +378,94 @@ onMounted(async () => {
   padding: 24px;
 }
 .task-card-modal {
-  width: min(560px, 100%);
-  max-height: min(92vh, 860px);
-  overflow: auto;
+  width: min(1080px, 100%);
+  height: min(86vh, 820px);
+  display: flex;
+  flex-direction: column;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
-  padding: 0 0 8px;
+  padding: 0;
+  overflow: hidden;
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+}
+.task-card-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);
+}
+.task-card-main,
+.task-card-side {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 24px 16px;
+}
+.task-card-main {
+  display: flex;
+  flex-direction: column;
+}
+.task-card-side {
+  border-left: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+.desc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.desc-head-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #64748b;
+}
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.icon-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.desc-drop {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+}
+.desc-drop :deep(.md-editor) {
+  width: 100%;
+}
+.desc-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #3b82f6;
+  border-radius: 8px;
+  background: rgba(239, 246, 255, 0.92);
+  color: #1d4ed8;
+  font-weight: 600;
+  pointer-events: none;
 }
 .task-card-modal-header {
   display: flex;
@@ -390,9 +486,11 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
 }
-.task-card-modal > .form-group,
-.task-card-modal > .form-row {
-  padding: 0 24px;
+.task-card-side .form-group {
+  margin-bottom: 12px;
+}
+.side-attachments {
+  margin-bottom: 14px;
 }
 .task-card-close {
   width: 28px;
@@ -474,22 +572,7 @@ onMounted(async () => {
   height: 18px;
   display: block;
 }
-.task-card-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 0.9rem;
-  font-family: inherit;
-  resize: vertical;
-}
 .task-card-input:focus {
-  outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-}
-.task-card-textarea:focus {
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
@@ -529,7 +612,8 @@ onMounted(async () => {
   color: #0f172a;
 }
 .task-card-footer {
-  margin-top: 10px;
+  margin-top: 0;
+  flex-shrink: 0;
   padding: 16px 24px 16px;
   border-top: 1px solid #e2e8f0;
   display: flex;
@@ -590,5 +674,17 @@ onMounted(async () => {
 }
 .btn-delete-left {
   margin-right: auto;
+}
+@media (max-width: 800px) {
+  .task-card-modal {
+    height: min(92vh, 900px);
+  }
+  .task-card-body {
+    grid-template-columns: 1fr;
+  }
+  .task-card-side {
+    border-left: none;
+    border-top: 1px solid #e2e8f0;
+  }
 }
 </style>

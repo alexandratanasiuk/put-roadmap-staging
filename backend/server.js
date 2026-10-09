@@ -831,6 +831,9 @@ const readProjectStats = async (projectId) => {
 const pgErrorHttp = (error) => {
   const code = error?.parent?.code || error?.original?.code || error?.code;
   const raw = String(error?.parent?.message || error?.original?.message || error?.message || '');
+  if (code === 'P0002' && /file_not_found/i.test(raw)) {
+    return { status: 404, message: 'Файл не найден' };
+  }
   if (code === 'P0002') return { status: 404, message: 'Задача или этап не найдены' };
   if (code === '22023' && /stage_dep_cycle/i.test(raw)) {
     return { status: 400, message: 'Нельзя добавить связь этапов (цикл)' };
@@ -842,6 +845,12 @@ const pgErrorHttp = (error) => {
     return { status: 400, message: 'Нельзя сохранить связи задач (цикл)' };
   }
   if (code === '23505') return { status: 400, message: 'Нарушен порядок задач' };
+  if (code === '22023' && /file_too_large/i.test(raw)) {
+    return { status: 400, message: 'Файл больше 50 МБ' };
+  }
+  if (code === '22023' && /file_empty/i.test(raw)) {
+    return { status: 400, message: 'Пустой файл' };
+  }
   if (code === '22023') return { status: 400, message: error.message || 'Некорректные данные' };
   return { status: 500, message: error.message || 'Ошибка сервера' };
 };
@@ -2416,6 +2425,118 @@ app.post('/api/blocks/:blockId/tasks/:taskId/cycle-status', authenticateToken, a
     res.json(await hydrateBlockById(access.block.id));
   } catch (error) {
     console.error('❌ Ошибка смены статуса задачи:', error);
+    const mapped = pgErrorHttp(error);
+    res.status(mapped.status).json({ error: mapped.message });
+  }
+});
+
+const taskFileNameFromHeader = (req) => {
+  const raw = String(req.get('x-file-name') || '').trim();
+  let decoded = 'file';
+  try {
+    decoded = decodeURIComponent(raw || 'file');
+  } catch {
+    decoded = raw || 'file';
+  }
+  const base = decoded.replace(/\\/g, '/').split('/').pop() || 'file';
+  return base.replace(/[\u0000-\u001f]/g, '').slice(0, 180) || 'file';
+};
+
+app.get('/api/blocks/:blockId/tasks/:taskId/files', authenticateToken, async (req, res) => {
+  try {
+    const access = await requireBlockMutation(req, req.params.blockId, null, '');
+    if (access.errorStatus) return res.status(access.errorStatus).json({ error: access.errorMessage });
+    const rows = await sequelize.query(
+      'SELECT * FROM public.roadmap_task_file_list($1, $2)',
+      { bind: [access.block.id, String(req.params.taskId)], type: QueryTypes.SELECT }
+    );
+    res.json((rows || []).map((row) => ({
+      id: row.id,
+      fileName: row.file_name,
+      mime: row.mime,
+      byteSize: Number(row.byte_size) || 0,
+      createdAt: row.created_at
+    })));
+  } catch (error) {
+    console.error('❌ Ошибка списка вложений:', error);
+    const mapped = pgErrorHttp(error);
+    res.status(mapped.status).json({ error: mapped.message });
+  }
+});
+
+app.post(
+  '/api/blocks/:blockId/tasks/:taskId/files',
+  authenticateToken,
+  express.raw({ type: 'application/octet-stream', limit: '52mb' }),
+  async (req, res) => {
+    try {
+      const access = await requireBlockMutation(req, req.params.blockId, 'editTasks', 'Нет права редактирования задач');
+      if (access.errorStatus) return res.status(access.errorStatus).json({ error: access.errorMessage });
+      const content = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (!content.length) return res.status(400).json({ error: 'Пустой файл' });
+      if (content.length > 50 * 1024 * 1024) return res.status(400).json({ error: 'Файл больше 50 МБ' });
+      const fileName = taskFileNameFromHeader(req);
+      const mime = String(req.get('x-file-mime') || 'application/octet-stream').slice(0, 120);
+      const rows = await sequelize.query(
+        'SELECT public.roadmap_task_file_add($1, $2, $3, $4, $5) AS id',
+        {
+          bind: [access.block.id, String(req.params.taskId), fileName, mime, content],
+          type: QueryTypes.SELECT
+        }
+      );
+      res.status(201).json({
+        id: rows?.[0]?.id,
+        fileName,
+        mime,
+        byteSize: content.length
+      });
+    } catch (error) {
+      console.error('❌ Ошибка загрузки вложения:', error);
+      const mapped = pgErrorHttp(error);
+      res.status(mapped.status).json({ error: mapped.message });
+    }
+  }
+);
+
+app.get('/api/blocks/:blockId/tasks/:taskId/files/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const access = await requireBlockMutation(req, req.params.blockId, null, '');
+    if (access.errorStatus) return res.status(access.errorStatus).json({ error: access.errorMessage });
+    const rows = await sequelize.query(
+      'SELECT * FROM public.roadmap_task_file_get($1, $2, $3)',
+      {
+        bind: [access.block.id, String(req.params.taskId), String(req.params.fileId)],
+        type: QueryTypes.SELECT
+      }
+    );
+    const row = rows?.[0];
+    if (!row?.content) return res.status(404).json({ error: 'Файл не найден' });
+    const content = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content);
+    const fileName = String(row.file_name || 'file');
+    res.setHeader('Content-Type', row.mime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.send(content);
+  } catch (error) {
+    console.error('❌ Ошибка скачивания вложения:', error);
+    const mapped = pgErrorHttp(error);
+    res.status(mapped.status).json({ error: mapped.message });
+  }
+});
+
+app.delete('/api/blocks/:blockId/tasks/:taskId/files/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const access = await requireBlockMutation(req, req.params.blockId, 'editTasks', 'Нет права редактирования задач');
+    if (access.errorStatus) return res.status(access.errorStatus).json({ error: access.errorMessage });
+    await sequelize.query(
+      'SELECT public.roadmap_task_file_delete($1, $2, $3) AS id',
+      {
+        bind: [access.block.id, String(req.params.taskId), String(req.params.fileId)],
+        type: QueryTypes.SELECT
+      }
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Ошибка удаления вложения:', error);
     const mapped = pgErrorHttp(error);
     res.status(mapped.status).json({ error: mapped.message });
   }
