@@ -69,36 +69,36 @@ export function clipPlacementToColumns(startIndex, columnSpan, columns) {
   }
 }
 
-function isWideSpan(columnSpan) {
-  return columnSpan >= 2
+function calendarDayStamp(date) {
+  if (!date) return Number.POSITIVE_INFINITY
+  return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate()
+}
+
+function startTimeMs(block) {
+  const { start } = getBlockPlanRange(block)
+  return calendarDayStamp(start)
 }
 
 function endTimeMs(block) {
   const { end } = getBlockPlanRange(block)
-  return end ? end.getTime() : Number.POSITIVE_INFINITY
+  return calendarDayStamp(end)
 }
 
 function compareBlockId(a, b) {
   return String(a.id).localeCompare(String(b.id), undefined, { numeric: true })
 }
 
-/** В колонке: сначала широкие по дате окончания, затем остальные. */
-export function sortStagesInTimelineColumn(stages, getColumnSpan) {
-  const spanById = new Map()
-  for (const stage of stages) {
-    spanById.set(String(stage.id), getColumnSpan(stage))
-  }
+/** Сверху вниз: более ранняя дата начала, при равенстве — более раннее окончание. */
+export function compareStagesByPlanDates(a, b) {
+  const byStart = startTimeMs(a) - startTimeMs(b)
+  if (byStart !== 0) return byStart
+  const byEnd = endTimeMs(a) - endTimeMs(b)
+  if (byEnd !== 0) return byEnd
+  return compareBlockId(a, b)
+}
 
-  return [...stages].sort((a, b) => {
-    const spanA = spanById.get(String(a.id)) ?? 1
-    const spanB = spanById.get(String(b.id)) ?? 1
-    const wideA = isWideSpan(spanA)
-    const wideB = isWideSpan(spanB)
-    if (wideA !== wideB) return wideA ? -1 : 1
-    const byEnd = endTimeMs(a) - endTimeMs(b)
-    if (byEnd !== 0) return byEnd
-    return compareBlockId(a, b)
-  })
+export function sortStagesInTimelineColumn(stages) {
+  return [...stages].sort(compareStagesByPlanDates)
 }
 
 export function buildClippedPlacements(blocks, columns, getIndexFromDate) {
@@ -113,12 +113,10 @@ export function buildClippedPlacements(blocks, columns, getIndexFromDate) {
 }
 
 export function buildTimelineLayoutColumns(columns, blocks, placements) {
-  const getColumnSpan = (block) => placements.get(String(block.id))?.columnSpan ?? 1
   return columns.map((column) => {
     const key = String(column.index)
     const stages = sortStagesInTimelineColumn(
-      blocks.filter((block) => placements.get(String(block.id))?.placementKey === key),
-      getColumnSpan
+      blocks.filter((block) => placements.get(String(block.id))?.placementKey === key)
     )
     return {
       ...column,

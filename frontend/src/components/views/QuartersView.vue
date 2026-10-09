@@ -71,7 +71,7 @@ import BlockCard from '@/components/common/Block.vue'
 import TaskCardModal from '@/components/common/TaskCardModal.vue'
 import { useTasks } from '@/composables/useTasks'
 import { useNotification } from '@/composables/useNotification'
-import { getBlockCoveredIndexes, layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
+import { compareStagesByPlanDates, getBlockCoveredIndexes, layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
 
 // Экран "По кварталам": span startDate→releaseDate и вертикальная паковка, как на карте Шивы.
 const emit = defineEmits(['editBlock'])
@@ -167,7 +167,7 @@ const onAddTaskAndOpenModal = async (block) => {
 
 const sortedBlocks = computed(() => {
   if (!blocks?.value) return []
-  return [...blocks.value].sort((a, b) => new Date(a.releaseDate) - new Date(b.releaseDate))
+  return [...blocks.value].sort((a, b) => compareStagesByPlanDates(a, b))
 })
 
 const getQuarterIndexFromDate = (dateLike) => {

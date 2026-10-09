@@ -135,6 +135,7 @@
             v-for="block in sortedBlocks"
             :key="block.id"
             :block="block"
+            :compact="isShortStage(block)"
             :style="getVisibleBlockStyle(block)"
             :class="{ 'block-dragging': isDraggingBlock && draggedBlockId === block.id }"
             :drag-over-task="dragOverTask"
@@ -181,7 +182,7 @@ import { useNotification } from '@/composables/useNotification'
 import BlockCard from '@/components/common/Block.vue'
 import TaskCardModal from '@/components/common/TaskCardModal.vue'
 import Tooltip from '@/components/common/Tooltip.vue'
-import { layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
+import { compareStagesByPlanDates, getBlockPlanRange, layoutTimelineBlocks } from '@/utils/timelineSpanningLayout'
 
 // Экран "По месяцам": месячная шкала с ресайзом и DnD этапов/задач.
 // Получаем данные от родителя через inject
@@ -276,7 +277,67 @@ const observeMonthBlockHeights = () => {
   })
 }
 
+const SHORT_STAGE_DAYS = 15
+const COLLAPSED_STAGE_HEIGHT = 40
+
+const toLocalDay = (value) => {
+  const raw = String(value || '').trim()
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+const dayKey = (date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getStageDayRange = (block) => {
+  const { start, end } = getBlockPlanRange(block)
+  const from = toLocalDay(start)
+  const to = toLocalDay(end)
+  if (!from || !to) return null
+  return from.getTime() <= to.getTime() ? { from, to } : { from: to, to: from }
+}
+
+const stageDurationDays = (block) => {
+  const range = getStageDayRange(block)
+  if (!range) return null
+  return Math.round((range.to.getTime() - range.from.getTime()) / 86400000) + 1
+}
+
+const isShortStage = (block) => {
+  const days = stageDurationDays(block)
+  return days != null && days < SHORT_STAGE_DAYS
+}
+
+const getStageDayGeometry = (block) => {
+  const range = getStageDayRange(block)
+  const days = visibleDays.value
+  if (!range || !days.length) return null
+  const fromKey = dayKey(range.from)
+  const toKey = dayKey(range.to)
+  let startDay = null
+  let endDay = null
+  for (const day of days) {
+    const key = dayKey(day.date)
+    if (key < fromKey || key > toKey) continue
+    if (!startDay) startDay = day
+    endDay = day
+  }
+  if (!startDay || !endDay) return null
+  return {
+    left: startDay.startX,
+    width: Math.max(endDay.endX - startDay.startX, endDay.endX - endDay.startX)
+  }
+}
+
 const getMonthLayoutHeight = (block) => {
+  if (isShortStage(block)) return COLLAPSED_STAGE_HEIGHT
   const estimatedHeight = calculateBlockHeight(block)
   const tasksCount = Array.isArray(block?.tasks) ? block.tasks.length : 0
   return estimatedHeight + tasksCount * MONTH_TASK_EXTRA_HEIGHT
@@ -332,7 +393,7 @@ const onAddTaskAndOpenModal = async (block) => {
 // Сортировка блоков по дате
 const sortedBlocks = computed(() => {
   if (!blocks?.value) return []
-  return [...blocks.value].sort((a, b) => new Date(a.releaseDate) - new Date(b.releaseDate))
+  return [...blocks.value].sort((a, b) => compareStagesByPlanDates(a, b))
 })
 
 const monthLayout = computed(() =>
@@ -360,10 +421,11 @@ const getVisibleBlockStyle = (block) => {
   if (!position) {
     return { display: 'none' }
   }
+  const days = getStageDayGeometry(block)
   return {
-    left: position.left + 'px',
+    left: (days ? days.left : position.left) + 'px',
     top: position.top + 'px',
-    width: position.width + 'px',
+    width: (days ? days.width : position.width) + 'px',
     backgroundColor: getBlockBackgroundColor(block)
   }
 }

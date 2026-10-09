@@ -41,7 +41,7 @@
           rows="2"
         ></textarea>
       </div>
-      <Tooltip v-else :label="task.title" fill>
+      <Tooltip v-else :label="task.title" fill only-truncated>
         <div
           class="task-title"
           :class="{ 'is-readonly': readOnly }"
@@ -225,8 +225,8 @@ const onDragLeave = (event) => {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 6px;
+  padding: 3px 0;
   cursor: grab;
   user-select: none;
   min-width: 0;

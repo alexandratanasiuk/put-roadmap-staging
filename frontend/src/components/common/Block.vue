@@ -2,8 +2,15 @@
   <div
     class="block"
     :style="style"
-    :class="{ completed: block.completed, editing: block.editing }"
+    :class="{
+      completed: block.completed,
+      editing: block.editing,
+      'is-compact': compact,
+      'is-collapsed': isCollapsed,
+      'is-open': compact && !isCollapsed
+    }"
     :data-block-id="block.id"
+    @click="onCompactClick"
   >
     <div
       class="block-header"
@@ -12,17 +19,19 @@
       @dragstart="onBlockDragStart"
       @dragend="onBlockDragEnd"
     >
-      <Tooltip :label="block.title" fill>
-        <button
-          type="button"
-          class="block-title"
-          @click.stop="onTitleClick"
-        >
-          {{ block.title }}
-        </button>
-      </Tooltip>
+      <div class="block-title-row">
+        <Tooltip :label="block.title" fill only-truncated>
+          <button
+            type="button"
+            class="block-title"
+            @click.stop="onTitleClick"
+          >
+            {{ block.title }}
+          </button>
+        </Tooltip>
+      </div>
 
-      <div v-if="dateRangeText || block.isOverdue" class="block-header-meta">
+      <div v-if="!isCollapsed && (dateRangeText || block.isOverdue)" class="block-header-meta">
         <Tooltip v-if="block.isOverdue" :label="overdueTitle">
           <span
             class="block-overdue"
@@ -90,7 +99,7 @@
       </div>
     </div>
 
-    <div class="block-tasks">
+    <div v-if="!isCollapsed" class="block-tasks">
       <div class="tasks-header">
         <span class="tasks-title">Элементы</span>
         <Tooltip v-if="!readOnly" label="Добавить задачу">
@@ -139,7 +148,7 @@
       </div>
     </div>
 
-    <div class="block-progress">
+    <div v-if="!isCollapsed" class="block-progress">
       <div class="progress-header">
         <span class="progress-label">Прогресс этапа</span>
         <span class="progress-value">{{ progressLabel }}</span>
@@ -152,7 +161,7 @@
       </div>
     </div>
 
-    <div class="block-effort-summary">
+    <div v-if="!isCollapsed" class="block-effort-summary">
       <span class="effort-label">Трудозатраты:</span>
       <span class="effort-value" :class="{ 'is-over': isEffortOver }">
         {{ totalTasksEffort }}&nbsp;/&nbsp;{{ block.effort || 0 }}&nbsp;ч
@@ -171,7 +180,8 @@ const props = defineProps({
   block: { type: Object, required: true },
   style: { type: Object, default: () => ({}) },
   dragOverTask: { type: Object, default: null },
-  draggedTask: { type: Object, default: null }
+  draggedTask: { type: Object, default: null },
+  compact: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -204,6 +214,28 @@ const startDateInputRef = ref(null)
 const endDateInputRef = ref(null)
 const editStartDate = ref('')
 const editEndDate = ref('')
+const collapsed = ref(true)
+const isCollapsed = computed(() => props.compact && collapsed.value)
+
+watch(
+  () => props.compact,
+  (value, previous) => {
+    if (value && !previous) collapsed.value = true
+    if (!value) collapsed.value = false
+  }
+)
+
+const onCompactClick = (event) => {
+  if (!props.compact) return
+  if (isCollapsed.value) {
+    collapsed.value = false
+    return
+  }
+  if (event.target.closest('.block-date, .block-date-editor, .block-title, .add-task-btn, .tasks-list, .block-progress, .block-effort-summary, input, textarea, a, select')) {
+    return
+  }
+  collapsed.value = true
+}
 
 const toDateInputValue = (value) => {
   const raw = String(value || '').trim()
@@ -242,6 +274,10 @@ watch(
 )
 
 const onTitleClick = () => {
+  if (props.compact && collapsed.value) {
+    collapsed.value = false
+    return
+  }
   emit('edit-block')
 }
 
@@ -330,11 +366,11 @@ const onBlockDragEnd = () => {
   position: absolute;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   background: white;
   border: none;
-  border-radius: 10px;
-  padding: 12px;
+  border-radius: 8px;
+  padding: 8px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   z-index: 50;
@@ -355,18 +391,39 @@ const onBlockDragEnd = () => {
   background: #90EE90 !important;
   border-color: #86efac;
 }
+.block.is-collapsed {
+  gap: 0;
+  padding: 4px 6px;
+  min-width: 36px;
+  overflow: hidden !important;
+  cursor: pointer;
+}
+.block.is-open {
+  min-width: 280px;
+  z-index: 80;
+}
 
 .block-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 6px 8px;
-  padding: 8px;
+  gap: 2px 6px;
+  padding: 4px 6px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.72);
   cursor: grab;
   user-select: none;
+  min-width: 0;
+}
+.block.is-collapsed .block-header {
+  flex-wrap: nowrap;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.block.is-collapsed .block-title-row {
+  width: 100%;
   min-width: 0;
 }
 .block-header:active { cursor: grabbing; }
@@ -375,6 +432,13 @@ const onBlockDragEnd = () => {
   cursor: default;
 }
 
+.block-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
 .block-title {
   display: block;
   width: 100%;
@@ -465,8 +529,8 @@ const onBlockDragEnd = () => {
 .block-tasks {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 2px;
+  padding: 4px 6px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.72);
   min-width: 0;
@@ -475,7 +539,7 @@ const onBlockDragEnd = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-height: 24px;
+  min-height: 20px;
 }
 .tasks-title {
   font-size: 0.72rem;
@@ -504,7 +568,7 @@ const onBlockDragEnd = () => {
   min-width: 0;
 }
 .tasks-list.is-empty {
-  min-height: 28px;
+  min-height: 20px;
   justify-content: center;
 }
 .empty-text {
@@ -515,7 +579,7 @@ const onBlockDragEnd = () => {
 .block-progress {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
 }
 .progress-header {
@@ -553,8 +617,8 @@ const onBlockDragEnd = () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 3px 6px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.72);
   font-size: 0.72rem;
