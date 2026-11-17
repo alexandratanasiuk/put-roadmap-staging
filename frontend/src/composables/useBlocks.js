@@ -7,6 +7,74 @@ import { normalizeTasksArray } from '@/utils/taskModel'
 // Shared singleton state for all composable consumers.
 const blocks = ref([])
 const isLoadingBlocks = ref(false)
+const projectStats = ref(null)
+
+const rollupServerBlockStats = (list) => {
+  const source = Array.isArray(list) ? list : []
+  let completedReleasesCount = 0
+  let inProgressReleasesCount = 0
+  let totalTasksCount = 0
+  let completedTasksCount = 0
+  let totalEffort = 0
+  let completedEffort = 0
+  for (const block of source) {
+    const total = Number(block?.taskCounts?.total) || 0
+    const done = Number(block?.taskCounts?.done) || 0
+    const effort = Number(block?.effort) || 0
+    totalTasksCount += total
+    completedTasksCount += done
+    totalEffort += effort
+    if (block?.stageStatus === 'done') {
+      completedReleasesCount += 1
+      completedEffort += effort
+    } else if (total > 0) {
+      inProgressReleasesCount += 1
+    }
+  }
+  return {
+    completedReleasesCount,
+    inProgressReleasesCount,
+    totalTasksCount,
+    completedTasksCount,
+    overallProgress: totalTasksCount ? Math.round((completedTasksCount / totalTasksCount) * 100) : 0,
+    totalEffort,
+    completedEffort,
+    completedEffortPercent: totalEffort ? Math.round((completedEffort / totalEffort) * 100) : 0
+  }
+}
+
+const rememberServerStats = (stats) => {
+  if (!stats || typeof stats !== 'object') {
+    projectStats.value = rollupServerBlockStats(blocks.value)
+    return
+  }
+  projectStats.value = {
+    completedReleasesCount: Number(stats.completedReleasesCount) || 0,
+    inProgressReleasesCount: Number(stats.inProgressReleasesCount) || 0,
+    totalTasksCount: Number(stats.totalTasksCount) || 0,
+    completedTasksCount: Number(stats.completedTasksCount) || 0,
+    overallProgress: Number(stats.overallProgress) || 0,
+    totalEffort: Number(stats.totalEffort) || 0,
+    completedEffort: Number(stats.completedEffort) || 0,
+    completedEffortPercent: Number(stats.completedEffortPercent) || 0
+  }
+}
+
+const taskSignature = (tasks) => JSON.stringify((Array.isArray(tasks) ? tasks : []).map((task) => ({
+  id: String(task?.id || ''),
+  title: String(task?.title || ''),
+  status: String(task?.status || ''),
+  order: Number(task?.order) || 0,
+  effort: Number(task?.effort) || 0,
+  owner: String(task?.owner || ''),
+  description: String(task?.description || ''),
+  startDate: String(task?.startDate || ''),
+  releaseDate: String(task?.releaseDate || ''),
+  linkUrl: String(task?.linkUrl || ''),
+  linkNote: String(task?.linkNote || ''),
+  predecessorIds: Array.isArray(task?.predecessorIds) ? task.predecessorIds : [],
+  predecessorLinks: Array.isArray(task?.predecessorLinks) ? task.predecessorLinks : []
+})))
 
 export function useBlocks() {
   // Зависимости: auth-контекст и текущий активный проект.
@@ -57,6 +125,7 @@ export function useBlocks() {
     if (isLoadingBlocks.value) return
     if (!activeProjectId.value) {
       blocks.value = []
+      rememberServerStats(null)
       return { success: true, blocks: [] }
     }
     
@@ -77,6 +146,7 @@ export function useBlocks() {
         completed: b.stageStatus === 'done' || Boolean(b.completed),
         isOverdue: Boolean(b.isOverdue)
       }))
+      rememberServerStats(Array.isArray(payload) ? null : payload?.stats)
       console.log('✅ Блоки загружены:', blocks.value.length)
       return { success: true, blocks: blocks.value }
     } catch (error) {
@@ -115,6 +185,7 @@ export function useBlocks() {
     
     // ВАЖНО: принудительно обновляем позиции блоков
     forceUpdatePositions()
+    projectStats.value = rollupServerBlockStats(blocks.value)
     
     return { success: true, block: response.data }
   } catch (error) {
@@ -133,6 +204,7 @@ export function useBlocks() {
           await axios.delete(apiPath(`/blocks/${id}`))
           blocks.value = blocks.value.filter(b => b.id !== id)
           forceUpdatePositions()
+          projectStats.value = rollupServerBlockStats(blocks.value)
           return { success: true, message: '✅ Этап удален' }
         } catch (error) {
           console.error('❌ Ошибка удаления:', error)
@@ -174,10 +246,11 @@ export function useBlocks() {
         blocks.value.splice(index, 1)
       }
     }
+    projectStats.value = rollupServerBlockStats(blocks.value)
     return merged
   }
 
-  // Поля этапа — PUT /blocks. Массив задач — PUT /blocks/:id/tasks в таблицы.
+  // Поля этапа — PUT /blocks. Изменённые задачи — sync, не полная замена.
   const updateBlock = async (block) => {
     try {
       if (isReadOnly.value) {
@@ -189,7 +262,8 @@ export function useBlocks() {
       }
       const stageRes = await putWithRetry(apiPath(`/blocks/${block.id}`), stageFieldsFrom(block))
       let apiBlock = stageRes.data
-      if (Array.isArray(block.tasks)) {
+      const previous = blocks.value.find((item) => item.id === block.id)
+      if (Array.isArray(block.tasks) && taskSignature(previous?.tasks) !== taskSignature(block.tasks)) {
         const tasksRes = await putWithRetry(apiPath(`/blocks/${block.id}/tasks`), { tasks: block.tasks })
         apiBlock = tasksRes.data
       }
@@ -235,44 +309,21 @@ export function useBlocks() {
     }
   }
 
-  const toDateInputValue = (value) => {
-    const raw = String(value || '').trim()
-    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
-    return ''
-  }
-
-  const normalizeStageDatePair = (startDate, releaseDate, changedField) => {
-    let start = toDateInputValue(startDate)
-    let end = toDateInputValue(releaseDate)
-    if (start && end && start > end) {
-      if (changedField === 'startDate') end = start
-      else if (changedField === 'releaseDate') start = end
-      else {
-        const swapped = start
-        start = end
-        end = swapped
-      }
-    }
-    return { startDate: start, releaseDate: end }
-  }
-
-  // Частичное обновление дат этапа (начало и/или конец).
+  // Даты этапа нормализует roadmap_set_block_dates.
   const updateBlockDate = async (block, dates) => {
     try {
       if (isReadOnly.value) {
         return { success: false, error: new Error('read-only') }
       }
-      const patch = typeof dates === 'string' ? { releaseDate: dates } : (dates || {})
-      const { startDate, releaseDate } = normalizeStageDatePair(
-        patch.startDate ?? block.startDate,
-        patch.releaseDate ?? block.releaseDate,
-        patch.changedField
-      )
-      const updatedBlock = { ...block, startDate, releaseDate }
-      const response = await axios.put(apiPath(`/blocks/${block.id}`), stageFieldsFrom(updatedBlock))
+      const patch = typeof dates === 'string' ? { releaseDate: dates, changedField: 'releaseDate' } : (dates || {})
+      const response = await axios.patch(apiPath(`/blocks/${block.id}/dates`), {
+        startDate: patch.startDate ?? block.startDate ?? '',
+        releaseDate: patch.releaseDate ?? block.releaseDate ?? '',
+        changedField: patch.changedField || ''
+      })
       const merged = applyBlockFromApi(response.data, {
-        stagePredecessorIds: updatedBlock.stagePredecessorIds,
-        stageDependencyMeta: updatedBlock.stageDependencyMeta
+        stagePredecessorIds: block.stagePredecessorIds,
+        stageDependencyMeta: block.stageDependencyMeta
       })
       forceUpdatePositions()
       return { success: true, block: merged }
@@ -301,51 +352,15 @@ const forceUpdatePositions = () => {
   }, 50)
 }
 
-  // Агрегаты шапки — те же формулы, что v_project_stats, по computed-полям API.
-  const blockTasksTotal = (block) => {
-    const n = Number(block?.taskCounts?.total)
-    return Number.isFinite(n) ? n : (block?.tasks?.length || 0)
-  }
-  const blockTasksDone = (block) => {
-    const n = Number(block?.taskCounts?.done)
-    return Number.isFinite(n) ? n : (block?.tasks || []).filter((t) => t.status === 'done').length
-  }
-
-  const completedReleasesCount = computed(() =>
-    blocks.value.filter((block) => block.stageStatus === 'done').length
-  )
-
-  const inProgressReleasesCount = computed(() =>
-    blocks.value.filter((block) => blockTasksTotal(block) > 0 && block.stageStatus !== 'done').length
-  )
-
-  const totalTasksCount = computed(() =>
-    blocks.value.reduce((sum, block) => sum + blockTasksTotal(block), 0)
-  )
-
-  const completedTasksCount = computed(() =>
-    blocks.value.reduce((sum, block) => sum + blockTasksDone(block), 0)
-  )
-
-  const overallProgress = computed(() => {
-    if (totalTasksCount.value === 0) return 0
-    return Math.round((completedTasksCount.value / totalTasksCount.value) * 100)
-  })
-
-  const totalEffort = computed(() =>
-    blocks.value.reduce((sum, block) => sum + (Number(block.effort) || 0), 0)
-  )
-
-  const completedEffort = computed(() =>
-    blocks.value.reduce((sum, block) => (
-      block.stageStatus === 'done' ? sum + (Number(block.effort) || 0) : sum
-    ), 0)
-  )
-
-  const completedEffortPercent = computed(() => {
-    if (totalEffort.value === 0) return 0
-    return Math.round((completedEffort.value / totalEffort.value) * 100)
-  })
+  const statValue = (key) => computed(() => Number(projectStats.value?.[key]) || 0)
+  const completedReleasesCount = statValue('completedReleasesCount')
+  const inProgressReleasesCount = statValue('inProgressReleasesCount')
+  const totalTasksCount = statValue('totalTasksCount')
+  const completedTasksCount = statValue('completedTasksCount')
+  const overallProgress = statValue('overallProgress')
+  const totalEffort = statValue('totalEffort')
+  const completedEffort = statValue('completedEffort')
+  const completedEffortPercent = statValue('completedEffortPercent')
 
   // Утилиты прогресса этапов/задач. Если API уже отдал computed — берём его.
   const getTaskProgress = (block) => {

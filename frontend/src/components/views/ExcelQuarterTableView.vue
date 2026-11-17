@@ -379,7 +379,15 @@ const tableProjectTitle = computed(() => {
   return name ? name.toUpperCase() : 'НАЗВАНИЕ ПРОЕКТА'
 })
 
-const { cycleTaskStatus, saveTaskCard, deleteTask } = useTasks()
+const {
+  cycleTaskStatus,
+  saveTaskCard,
+  deleteTask,
+  addTask,
+  reorderTaskInsideBlock,
+  reorderTaskToEndOfBlock,
+  moveTaskBetweenBlocks
+} = useTasks()
 
 const BASE_YEAR = 2026
 
@@ -507,12 +515,6 @@ const onTableTaskDragOver = (event, block, task) => {
   tableStageDropTarget.value = null
 }
 
-const normalizeTaskOrder = (tasks) =>
-  tasks.map((item, idx) => ({
-    ...item,
-    order: idx + 1
-  }))
-
 const moveTableTask = async (targetBlock, targetTaskId = null) => {
   const drag = draggedTableTask.value
   if (!drag?.blockId || !drag?.taskId || !targetBlock?.id) return
@@ -525,42 +527,23 @@ const moveTableTask = async (targetBlock, targetTaskId = null) => {
   const movedTask = sourceTasksSorted.find((item) => item?.id === drag.taskId)
   if (!movedTask) return
 
-  const sourceWithoutMoved = sourceTasksSorted.filter((item) => item?.id !== drag.taskId)
-
   if (sourceBlock.id === destinationBlock.id) {
-    const insertIndex = targetTaskId
-      ? sourceWithoutMoved.findIndex((item) => item?.id === targetTaskId)
-      : sourceWithoutMoved.length
-    if (insertIndex < 0) return
-    sourceWithoutMoved.splice(insertIndex, 0, movedTask)
-    const updated = {
-      ...sourceBlock,
-      tasks: normalizeTaskOrder(sourceWithoutMoved)
+    if (targetTaskId) {
+      const targetTask = sourceTasksSorted.find((item) => item?.id === targetTaskId)
+      if (!targetTask) return
+      await reorderTaskInsideBlock(sourceBlock, movedTask, targetTask)
+      return
     }
-    if (typeof blocksActions?.updateBlock === 'function') {
-      await blocksActions.updateBlock(updated)
-    }
+    await reorderTaskToEndOfBlock(sourceBlock, movedTask)
     return
   }
 
   const destinationTasksSorted = tasksSorted(destinationBlock.tasks)
-  const insertIndex = targetTaskId
-    ? destinationTasksSorted.findIndex((item) => item?.id === targetTaskId)
-    : destinationTasksSorted.length
-  if (insertIndex < 0) return
-  const destinationNext = [...destinationTasksSorted]
-  destinationNext.splice(insertIndex, 0, movedTask)
-
-  if (typeof blocksActions?.updateBlock === 'function') {
-    await blocksActions.updateBlock({
-      ...sourceBlock,
-      tasks: normalizeTaskOrder(sourceWithoutMoved)
-    })
-    await blocksActions.updateBlock({
-      ...destinationBlock,
-      tasks: normalizeTaskOrder(destinationNext)
-    })
-  }
+  const targetTask = targetTaskId
+    ? destinationTasksSorted.find((item) => item?.id === targetTaskId)
+    : null
+  if (targetTaskId && !targetTask) return
+  await moveTaskBetweenBlocks(sourceBlock, destinationBlock, movedTask, targetTask)
 }
 
 const isTableStageDragOver = (block) =>
@@ -636,25 +619,7 @@ const submitQuickTask = async (block) => {
   const title = quickTaskDraftValue(block).trim()
   if (!title) return
   quickTaskSavingByBlock.value = { ...quickTaskSavingByBlock.value, [key]: true }
-  const tasks = Array.isArray(block?.tasks) ? [...block.tasks] : []
-  const maxOrder = tasks.reduce((max, task) => Math.max(max, Number(task?.order ?? -1)), -1)
-  const newTask = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title: title.slice(0, 220),
-    status: 'todo',
-    effort: 0,
-    startDate: '',
-    releaseDate: '',
-    order: maxOrder + 1,
-    isEditing: false,
-    editValue: ''
-  }
-  if (typeof blocksActions?.updateBlock === 'function') {
-    await blocksActions.updateBlock({
-      ...block,
-      tasks: [...tasks, newTask]
-    })
-  }
+  await addTask(block, title.slice(0, 220))
   quickTaskDraftByBlock.value = {
     ...quickTaskDraftByBlock.value,
     [key]: ''
@@ -1012,20 +977,12 @@ const commitStageDateEdit = async (block, field) => {
     return
   }
 
-  let startDate = field === 'startDate' ? nextValue : (block.startDate || '')
-  let releaseDate = field === 'releaseDate' ? nextValue : (block.releaseDate || '')
-  if (startDate && releaseDate && startDate > releaseDate) {
-    if (field === 'startDate') releaseDate = startDate
-    else startDate = releaseDate
-  }
-
-  const updatedBlock = {
-    ...block,
-    startDate,
-    releaseDate
-  }
-  if (typeof blocksActions?.updateBlock === 'function') {
-    await blocksActions.updateBlock(updatedBlock)
+  if (typeof blocksActions?.updateBlockDate === 'function') {
+    await blocksActions.updateBlockDate(block, {
+      startDate: field === 'startDate' ? nextValue : (block.startDate || ''),
+      releaseDate: field === 'releaseDate' ? nextValue : (block.releaseDate || ''),
+      changedField: field
+    })
   }
 
   editingStageDate.value = { blockId: null, field: null }

@@ -23,7 +23,9 @@ export function getBlockPlanRange(block) {
   return { start: end, end: start }
 }
 
-export function getBlockPlacementIndex(block, getIndexFromDate) {
+export function getBlockPlacementIndex(block, getIndexFromDate, indexKeys) {
+  const fromServer = serverPlanIndex(block, indexKeys?.start)
+  if (fromServer != null) return fromServer
   const { start, end } = getBlockPlanRange(block)
   const source = start || end
   if (!source) return null
@@ -31,7 +33,13 @@ export function getBlockPlacementIndex(block, getIndexFromDate) {
   return Number.isFinite(index) ? index : null
 }
 
-export function getBlockColumnSpan(block, getIndexFromDate) {
+export function getBlockColumnSpan(block, getIndexFromDate, indexKeys) {
+  const startFromServer = serverPlanIndex(block, indexKeys?.start)
+  const endFromServer = serverPlanIndex(block, indexKeys?.end)
+  if (startFromServer != null && endFromServer != null) {
+    return Math.max(1, endFromServer - startFromServer + 1)
+  }
+  if (startFromServer != null) return 1
   const { start, end } = getBlockPlanRange(block)
   if (!start || !end) return 1
   const startIndex = getIndexFromDate(start)
@@ -41,10 +49,10 @@ export function getBlockColumnSpan(block, getIndexFromDate) {
 }
 
 /** Все индексы колонок, которые занимает этап (для границ шкалы). */
-export function getBlockCoveredIndexes(block, getIndexFromDate) {
-  const placementIndex = getBlockPlacementIndex(block, getIndexFromDate)
+export function getBlockCoveredIndexes(block, getIndexFromDate, indexKeys) {
+  const placementIndex = getBlockPlacementIndex(block, getIndexFromDate, indexKeys)
   if (placementIndex == null) return []
-  const span = getBlockColumnSpan(block, getIndexFromDate)
+  const span = getBlockColumnSpan(block, getIndexFromDate, indexKeys)
   const result = []
   for (let i = 0; i < span; i += 1) {
     result.push(placementIndex + i)
@@ -88,8 +96,15 @@ function compareBlockId(a, b) {
   return String(a.id).localeCompare(String(b.id), undefined, { numeric: true })
 }
 
-/** Сверху вниз: более ранняя дата начала, при равенстве — более раннее окончание. */
+/** Сверху вниз: ключ сортировки из БД, иначе более ранняя дата начала, затем окончания. */
 export function compareStagesByPlanDates(a, b) {
+  const leftKey = a?.planSortKey
+  const rightKey = b?.planSortKey
+  if (leftKey && rightKey) {
+    if (leftKey < rightKey) return -1
+    if (leftKey > rightKey) return 1
+    return 0
+  }
   const byStart = startTimeMs(a) - startTimeMs(b)
   if (byStart !== 0) return byStart
   const byEnd = endTimeMs(a) - endTimeMs(b)
@@ -97,15 +112,21 @@ export function compareStagesByPlanDates(a, b) {
   return compareBlockId(a, b)
 }
 
+function serverPlanIndex(block, key) {
+  if (!key || block?.[key] == null || block[key] === '') return null
+  const value = Number(block[key])
+  return Number.isFinite(value) ? value : null
+}
+
 export function sortStagesInTimelineColumn(stages) {
   return [...stages].sort(compareStagesByPlanDates)
 }
 
-export function buildClippedPlacements(blocks, columns, getIndexFromDate) {
+export function buildClippedPlacements(blocks, columns, getIndexFromDate, indexKeys) {
   const placements = new Map()
   for (const block of blocks) {
-    const rawStart = getBlockPlacementIndex(block, getIndexFromDate)
-    const rawSpan = getBlockColumnSpan(block, getIndexFromDate)
+    const rawStart = getBlockPlacementIndex(block, getIndexFromDate, indexKeys)
+    const rawSpan = getBlockColumnSpan(block, getIndexFromDate, indexKeys)
     const clipped = clipPlacementToColumns(rawStart, rawSpan, columns)
     if (clipped) placements.set(String(block.id), clipped)
   }
@@ -307,12 +328,15 @@ export function layoutTimelineBlocks({
   heights,
   estimateHeight,
   getIndexFromDate,
+  indexKeys,
   bodyPaddingTopPx = TIMELINE_BODY_PAD_TOP_PX,
   laneGapPx = TIMELINE_LANE_GAP_PX,
   columnPadXPx = TIMELINE_COLUMN_PAD_X_PX
 }) {
-  const datedBlocks = (blocks || []).filter((block) => getBlockPlanRange(block).start)
-  const placements = buildClippedPlacements(datedBlocks, columns, getIndexFromDate)
+  const datedBlocks = (blocks || []).filter((block) => (
+    serverPlanIndex(block, indexKeys?.start) != null || getBlockPlanRange(block).start
+  ))
+  const placements = buildClippedPlacements(datedBlocks, columns, getIndexFromDate, indexKeys)
   const layoutColumns = buildTimelineLayoutColumns(columns, datedBlocks, placements)
   const getColumnSpan = (block) => placements.get(String(block.id))?.columnSpan ?? 1
   const getPlacementKey = (block) => placements.get(String(block.id))?.placementKey ?? null

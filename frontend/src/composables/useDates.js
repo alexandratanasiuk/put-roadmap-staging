@@ -96,7 +96,10 @@ export function useDates() {
   const collectBlockMonthIndexes = () => {
     const indexes = []
     blocks.value.forEach((block) => {
-      getBlockCoveredIndexes(block, getAbsoluteMonthIndexFromDate).forEach((index) => {
+      getBlockCoveredIndexes(block, getAbsoluteMonthIndexFromDate, {
+        start: 'planMonthIndexStart',
+        end: 'planMonthIndexEnd'
+      }).forEach((index) => {
         if (index >= 0) indexes.push(index)
       })
     })

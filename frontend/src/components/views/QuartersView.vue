@@ -178,7 +178,10 @@ const getQuarterIndexFromDate = (dateLike) => {
 const collectBlockQuarterIndexes = () => {
   const indexes = []
   sortedBlocks.value.forEach((block) => {
-    getBlockCoveredIndexes(block, getQuarterIndexFromDate).forEach((index) => {
+    getBlockCoveredIndexes(block, getQuarterIndexFromDate, {
+      start: 'planQuarterIndexStart',
+      end: 'planQuarterIndexEnd'
+    }).forEach((index) => {
       if (index >= 0) indexes.push(index)
     })
   })
@@ -258,7 +261,8 @@ const quarterLayout = computed(() =>
     blocks: sortedBlocks.value,
     heights: measuredBlockHeights.value,
     estimateHeight: getQuarterLayoutHeight,
-    getIndexFromDate: getQuarterIndexFromDate
+    getIndexFromDate: getQuarterIndexFromDate,
+    indexKeys: { start: 'planQuarterIndexStart', end: 'planQuarterIndexEnd' }
   })
 )
 

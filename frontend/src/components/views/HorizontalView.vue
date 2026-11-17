@@ -402,7 +402,8 @@ const monthLayout = computed(() =>
     blocks: sortedBlocks.value,
     heights: measuredBlockHeights.value,
     estimateHeight: getMonthLayoutHeight,
-    getIndexFromDate: getAbsoluteMonthIndexFromDate
+    getIndexFromDate: getAbsoluteMonthIndexFromDate,
+    indexKeys: { start: 'planMonthIndexStart', end: 'planMonthIndexEnd' }
   })
 )
 

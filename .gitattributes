@@ -1,6 +1,5 @@
 # Автоматически нормализует окончания строк
 * text=auto
-<<<<<<< HEAD
 
 # Для batch файлов всегда используем CRLF (Windows-формат)
 *.bat text eol=crlf
@@ -32,6 +31,3 @@
 *.gif binary
 *.ico binary
 *.sqlite binary
-=======
-*.bat text eol=crlf
->>>>>>> 607d50ed5ffb4151b26669f5131008d0be0d3934

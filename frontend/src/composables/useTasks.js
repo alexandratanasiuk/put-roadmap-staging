@@ -90,11 +90,13 @@ export function useTasks() {
   }
 
   // Создает новую задачу в конце списка этапа.
-  const addTask = async (block) => {
+  const addTask = async (block, title = 'Новая задача') => {
     if (isReadOnly.value) return { success: false, message: 'Режим только просмотра' }
     if (!block?.id) return { success: false, message: 'Некорректные данные этапа' }
     try {
-      const response = await axios.post(apiPath(`/blocks/${block.id}/tasks`), { title: 'Новая задача' })
+      const response = await axios.post(apiPath(`/blocks/${block.id}/tasks`), {
+        title: String(title || '').trim() || 'Новая задача'
+      })
       applyHydratedBlock(response.data)
       return { success: true, block: response.data, newTaskId: response.data?.newTaskId }
     } catch (error) {
@@ -420,6 +422,9 @@ export function useTasks() {
     saveTaskEdit,
     cancelTaskEdit,
     saveTaskCard,
+    reorderTaskInsideBlock,
+    reorderTaskToEndOfBlock,
+    moveTaskBetweenBlocks,
     onTaskDragStart,
     onTaskDragEnd,
     onTaskDragOver,

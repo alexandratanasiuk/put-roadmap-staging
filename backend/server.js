@@ -599,6 +599,24 @@ const ownerScopeForBlocks = (user) => {
   return user.username;
 };
 
+/** Участник чужого проекта: видит этапы этого проекта, а не только свои. */
+const isSharedProjectMember = (user, project) => {
+  if (!user || !project) return false;
+  if (isArchitectUser(user) || isGuestUser(user) || isProjectDelegateUser(user)) return false;
+  const uname = normalizeUsernameLower(user.username);
+  if (!uname) return false;
+  if (normalizeUsernameLower(project.ownerUsername) === uname) return false;
+  return projectIncludesUser(project, user.username);
+};
+
+const findSharedProjectIds = async (user) => {
+  if (!user || isArchitectUser(user) || isGuestUser(user) || isProjectDelegateUser(user)) return [];
+  const rows = await Project.findAll({
+    attributes: ['id', 'ownerUsername', 'sharedUsernames']
+  });
+  return rows.filter((project) => isSharedProjectMember(user, project)).map((project) => String(project.id));
+};
+
 const canMutateBlock = (user, block) => {
   if (isGuestUser(user)) return false;
   if (!block) return false;
@@ -711,90 +729,16 @@ const getTaskStats = (tasksLike) => {
 
 const isPostgresRoadmap = () => sequelize.getDialect() === 'postgres';
 
-const blockToPlain = (block) => {
-  if (!block) return null;
-  if (typeof block.toJSON === 'function') return block.toJSON();
-  return { ...block };
-};
-
-const stageStatusFromStats = (stats) => {
-  if (!stats?.total) return 'idle';
-  if (stats.done === stats.total) return 'done';
-  if (stats.progress > 0 || stats.done > 0) return 'started';
-  return 'idle';
-};
-
-const asJsonArray = (value) => {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
+const asJsonValue = (value) => {
+  if (value == null) return null;
+  if (typeof value === 'string') {
     try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
+      return JSON.parse(value);
     } catch {
-      return [];
+      return null;
     }
   }
-  return [];
-};
-
-const attachBlockComputed = (plain, row) => {
-  const tableTasks = asJsonArray(row?.tasks);
-  const stats = row
-    ? {
-        total: Number(row.tasks_total) || 0,
-        todo: Number(row.tasks_todo) || 0,
-        progress: Number(row.tasks_progress) || 0,
-        done: Number(row.tasks_done) || 0
-      }
-    : { total: 0, todo: 0, progress: 0, done: 0 };
-  const progressPercent = row?.progress_percent != null
-    ? Number(row.progress_percent)
-    : 0;
-  const stageStatus = row?.stage_status || 'idle';
-  const isOverdue = row?.is_overdue === true || row?.is_overdue === 't' || row?.is_overdue === 'true';
-  return {
-    ...plain,
-    tasks: tableTasks,
-    progressPercent,
-    stageStatus,
-    completed: stageStatus === 'done',
-    isOverdue,
-    taskCounts: stats,
-    stagePredecessorIds: asJsonArray(row?.stage_predecessor_ids),
-    stageDependencies: asJsonArray(row?.stage_dependencies)
-  };
-};
-
-const hydrateBlocksFromTables = async (blocks) => {
-  const list = Array.isArray(blocks) ? blocks : [];
-  const plains = list.map(blockToPlain).filter(Boolean);
-  if (!plains.length || !isPostgresRoadmap()) {
-    return plains.map((plain) => attachBlockComputed(plain, null));
-  }
-  try {
-    const ids = plains.map((p) => String(p.id));
-    const rows = await sequelize.query(
-      'SELECT * FROM public.roadmap_hydrate_blocks($1::text[])',
-      { bind: [ids], type: QueryTypes.SELECT }
-    );
-    const byId = new Map((rows || []).map((row) => [String(row.block_id), row]));
-    return plains.map((plain) => attachBlockComputed(plain, byId.get(String(plain.id)) || null));
-  } catch (error) {
-    console.error('❌ hydrateBlocksFromTables failed:', error.message);
-    throw error;
-  }
-};
-
-const replaceBlockTasksInTables = async (blockId, tasks) => {
-  if (!isPostgresRoadmap() || !blockId) return;
-  await sequelize.query('SELECT public.roadmap_replace_block_tasks($1, $2::jsonb)', {
-    bind: [String(blockId), JSON.stringify(Array.isArray(tasks) ? tasks : [])]
-  });
-};
-
-const hydrateOneBlock = async (block) => {
-  const [hydrated] = await hydrateBlocksFromTables(block ? [block] : []);
-  return hydrated || blockToPlain(block);
+  return value;
 };
 
 const emptyProjectStats = () => ({
@@ -808,13 +752,7 @@ const emptyProjectStats = () => ({
   completedEffortPercent: 0
 });
 
-const readProjectStats = async (projectId) => {
-  if (!isPostgresRoadmap() || !projectId) return emptyProjectStats();
-  const rows = await sequelize.query(
-    'SELECT * FROM public.v_project_stats WHERE project_id = $1',
-    { bind: [String(projectId)], type: QueryTypes.SELECT }
-  );
-  const row = rows?.[0];
+const mapProjectStats = (row) => {
   if (!row) return emptyProjectStats();
   return {
     completedReleasesCount: Number(row.completed_releases_count) || 0,
@@ -826,6 +764,86 @@ const readProjectStats = async (projectId) => {
     completedEffort: Number(row.completed_effort) || 0,
     completedEffortPercent: Number(row.completed_effort_percent) || 0
   };
+};
+
+const blockScopeForUser = (user, projectId, { sharedIds = [], sharedMember = false } = {}) => {
+  const pid = String(projectId || '').trim() || null;
+  if (isProjectDelegateUser(user)) {
+    return {
+      projectId: pid,
+      owners: delegateBlockOwnerTargets(),
+      extraProjectIds: [],
+      ownerFilter: true
+    };
+  }
+  if (pid && sharedMember) {
+    return {
+      projectId: pid,
+      owners: [],
+      extraProjectIds: [],
+      ownerFilter: false
+    };
+  }
+  return {
+    projectId: pid,
+    owners: [ownerScopeForBlocks(user)].filter(Boolean),
+    extraProjectIds: pid ? [] : sharedIds,
+    ownerFilter: true
+  };
+};
+
+const listRoadmapBlocks = async (scope) => {
+  const rows = await sequelize.query(
+    'SELECT block FROM public.roadmap_list_blocks($1, $2::text[], $3::text[], $4)',
+    {
+      bind: [
+        scope.projectId,
+        scope.owners || [],
+        scope.extraProjectIds || [],
+        Boolean(scope.ownerFilter)
+      ],
+      type: QueryTypes.SELECT
+    }
+  );
+  return (rows || []).map((row) => asJsonValue(row.block)).filter(Boolean);
+};
+
+const readScopeStats = async (scope) => {
+  const rows = await sequelize.query(
+    'SELECT * FROM public.roadmap_scope_stats($1, $2::text[], $3::text[], $4)',
+    {
+      bind: [
+        scope.projectId,
+        scope.owners || [],
+        scope.extraProjectIds || [],
+        Boolean(scope.ownerFilter)
+      ],
+      type: QueryTypes.SELECT
+    }
+  );
+  return mapProjectStats(rows?.[0]);
+};
+
+const readBlockPayload = async (blockId) => {
+  if (!blockId) return null;
+  const rows = await sequelize.query(
+    'SELECT public.roadmap_block_payload($1) AS block',
+    { bind: [String(blockId)], type: QueryTypes.SELECT }
+  );
+  return asJsonValue(rows?.[0]?.block);
+};
+
+const replaceBlockTasksInTables = async (blockId, tasks) => {
+  if (!isPostgresRoadmap() || !blockId) return;
+  await sequelize.query('SELECT public.roadmap_replace_block_tasks($1, $2::jsonb)', {
+    bind: [String(blockId), JSON.stringify(Array.isArray(tasks) ? tasks : [])]
+  });
+};
+
+const syncBlockTasksInTables = async (blockId, tasks) => {
+  await sequelize.query('SELECT public.roadmap_sync_block_tasks($1, $2::jsonb)', {
+    bind: [String(blockId), JSON.stringify(Array.isArray(tasks) ? tasks : [])]
+  });
 };
 
 const pgErrorHttp = (error) => {
@@ -855,11 +873,7 @@ const pgErrorHttp = (error) => {
   return { status: 500, message: error.message || 'Ошибка сервера' };
 };
 
-const hydrateBlockById = async (blockId) => {
-  const block = await Block.findByPk(blockId);
-  if (!block) return null;
-  return hydrateOneBlock(block);
-};
+const hydrateBlockById = async (blockId) => readBlockPayload(blockId);
 
 const requireBlockMutation = async (req, blockId, permissionKey, permissionLabel) => {
   if (!isPostgresRoadmap()) {
@@ -1374,7 +1388,6 @@ const parseAssistantAddTaskIntent = (text) => {
   return { stageIndex, stageName, title: title.slice(0, 140) };
 };
 
-const buildAssistantTaskId = () => `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const buildAssistantStageTitle = () => `Этап от ассистента ${new Date().toLocaleString('ru-RU')}`;
 
 const parseAssistantCreateStageIntent = (text) => {
@@ -1389,31 +1402,6 @@ const parseAssistantCreateStageIntent = (text) => {
   return { title: title || buildAssistantStageTitle() };
 };
 
-const nextAssistantStageDates = (blocks) => {
-  const list = Array.isArray(blocks) ? blocks : [];
-  if (!list.length) {
-    const today = new Date();
-    const firstStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const firstEnd = new Date(firstStart);
-    firstEnd.setMonth(firstStart.getMonth() + 1);
-    firstEnd.setDate(firstEnd.getDate() - 1);
-    return {
-      startDate: firstStart.toISOString().split('T')[0],
-      releaseDate: firstEnd.toISOString().split('T')[0]
-    };
-  }
-  const sortedByEnd = [...list].sort((a, b) => new Date(b.releaseDate) - new Date(a.releaseDate));
-  const lastBlock = sortedByEnd[0];
-  const lastEndDate = new Date(lastBlock.releaseDate || lastBlock.startDate || Date.now());
-  const startDate = lastEndDate.toISOString().split('T')[0];
-  const newEndDate = new Date(lastEndDate);
-  newEndDate.setMonth(lastEndDate.getMonth() + 1);
-  return {
-    startDate,
-    releaseDate: newEndDate.toISOString().split('T')[0]
-  };
-};
-
 const maybeApplyAssistantStageMutation = async ({ reqUser, loaded, messages }) => {
   const latestUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
   const intent = parseAssistantCreateStageIntent(latestUserMessage);
@@ -1421,29 +1409,17 @@ const maybeApplyAssistantStageMutation = async ({ reqUser, loaded, messages }) =
   if (!hasPermission(reqUser, 'createStages')) {
     return { applied: false, reply: 'У вашей роли нет права на создание этапов.' };
   }
-  let newBlock;
-  if (isPostgresRoadmap()) {
-    const rows = await sequelize.query(
-      'SELECT block_id FROM public.roadmap_create_block($1, $2, $3, $4)',
-      {
-        bind: [loaded.project.id, loaded.project.ownerUsername, intent.title, ''],
-        type: QueryTypes.SELECT
-      }
-    );
-    newBlock = await Block.findByPk(rows?.[0]?.block_id);
-  } else {
-    const { startDate, releaseDate } = nextAssistantStageDates(loaded.blocks);
-    newBlock = await Block.create({
-      title: intent.title,
-      description: '',
-      startDate,
-      releaseDate,
-      effort: 40,
-      completed: false,
-      projectId: loaded.project.id,
-      ownerUsername: loaded.project.ownerUsername
-    });
+  if (!isPostgresRoadmap()) {
+    return { applied: false, reply: 'Создание этапов доступно только на Postgres.' };
   }
+  const rows = await sequelize.query(
+    'SELECT block_id FROM public.roadmap_create_block($1, $2, $3, $4)',
+    {
+      bind: [loaded.project.id, loaded.project.ownerUsername, intent.title, ''],
+      type: QueryTypes.SELECT
+    }
+  );
+  const newBlock = await Block.findByPk(rows?.[0]?.block_id);
   if (!newBlock) {
     return { applied: false, reply: 'Не удалось создать этап.' };
   }
@@ -1503,24 +1479,13 @@ const maybeApplyAssistantTaskMutation = async ({ reqUser, loaded, messages }) =>
     return { applied: false, reply: `Задача «${intent.title}» уже есть в этапе «${target.title || 'Без названия'}».` };
   }
 
-  if (isPostgresRoadmap()) {
-    await sequelize.query('SELECT block_id, task_id FROM public.roadmap_insert_task($1, $2)', {
-      bind: [target.id, intent.title],
-      type: QueryTypes.SELECT
-    });
-  } else {
-    const maxOrder = prevTasks.reduce((acc, t) => {
-      const n = Number(t?.order);
-      return Number.isFinite(n) && n > acc ? n : acc;
-    }, 0);
-    const nextTask = {
-      id: buildAssistantTaskId(),
-      title: intent.title,
-      status: 'todo',
-      order: maxOrder + 1
-    };
-    await target.update({ tasks: [...prevTasks, nextTask] });
+  if (!isPostgresRoadmap()) {
+    return { applied: false, reply: 'Добавление задач доступно только на Postgres.' };
   }
+  await sequelize.query('SELECT block_id, task_id FROM public.roadmap_insert_task($1, $2)', {
+    bind: [target.id, intent.title],
+    type: QueryTypes.SELECT
+  });
   await writeAuditLog({
     reqUser,
     action: 'block_update',
@@ -2020,24 +1985,10 @@ async function loadBlocksForAssistantContext(user, projectId) {
   if (!hasPermission(user, 'view')) return { error: 'no_view' };
   const project = await Project.findByPk(pid);
   if (!project || !canAccessProject(user, project)) return { error: 'no_project_access' };
-  if (isProjectDelegateUser(user)) {
-    const targets = delegateBlockOwnerTargets();
-    const whereClause = {
-      [Op.or]: targets.map((t) => sqlWhere(fn('lower', col('ownerUsername')), t.toLowerCase())),
-      projectId: pid
-    };
-    const blocks = await Block.findAll({
-      where: whereClause,
-      order: [['releaseDate', 'ASC']]
-    });
-    return { project, blocks: await hydrateBlocksFromTables(blocks) };
-  }
-  const ownerFilter = ownerScopeForBlocks(user);
-  const blocks = await Block.findAll({
-    where: { ownerUsername: ownerFilter, projectId: pid },
-    order: [['releaseDate', 'ASC']]
+  const scope = blockScopeForUser(user, pid, {
+    sharedMember: isSharedProjectMember(user, project)
   });
-  return { project, blocks: await hydrateBlocksFromTables(blocks) };
+  return { project, blocks: await listRoadmapBlocks(scope) };
 }
 
 // Получить все блоки (требуется токен)
@@ -2047,39 +1998,24 @@ app.get('/api/blocks', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Нет права просмотра' });
     }
     const projectId = String(req.query?.projectId || '').trim();
+    if (!isPostgresRoadmap()) {
+      return res.status(503).json({ error: 'Список этапов доступен только на Postgres' });
+    }
+    let sharedMember = false;
+    let sharedIds = [];
     if (projectId) {
       const project = await Project.findByPk(projectId);
       if (!project || !canAccessProject(req.user, project)) {
         return res.status(403).json({ error: 'Нет доступа к выбранному проекту' });
       }
+      sharedMember = isSharedProjectMember(req.user, project);
+    } else if (!isProjectDelegateUser(req.user)) {
+      sharedIds = await findSharedProjectIds(req.user);
     }
-    if (isProjectDelegateUser(req.user)) {
-      const targets = delegateBlockOwnerTargets();
-      const whereClause = {
-        [Op.or]: targets.map((t) =>
-          sqlWhere(fn('lower', col('ownerUsername')), t.toLowerCase())
-        )
-      };
-      if (projectId) whereClause.projectId = projectId;
-      const blocks = await Block.findAll({
-        where: whereClause,
-        order: [['releaseDate', 'ASC']]
-      });
-      return res.json({
-        blocks: await hydrateBlocksFromTables(blocks),
-        stats: await readProjectStats(projectId)
-      });
-    }
-    const ownerFilter = ownerScopeForBlocks(req.user);
-    const whereClause = { ownerUsername: ownerFilter };
-    if (projectId) whereClause.projectId = projectId;
-    const blocks = await Block.findAll({
-      where: whereClause,
-      order: [['releaseDate', 'ASC']]
-    });
+    const scope = blockScopeForUser(req.user, projectId, { sharedIds, sharedMember });
     res.json({
-      blocks: await hydrateBlocksFromTables(blocks),
-      stats: await readProjectStats(projectId)
+      blocks: await listRoadmapBlocks(scope),
+      stats: await readScopeStats(scope)
     });
   } catch (error) {
     console.error('❌ Ошибка получения блоков:', error);
@@ -2106,46 +2042,35 @@ app.post('/api/blocks', authenticateToken, async (req, res) => {
     if (!project) {
       return res.status(403).json({ error: 'Нет доступа к выбранному проекту' });
     }
-    const ownerUsername = String(project.ownerUsername || req.user.username || '').trim();
-    let newBlock;
-    if (isPostgresRoadmap()) {
-      const rows = await sequelize.query(
-        'SELECT block_id FROM public.roadmap_create_block($1, $2, $3, $4)',
-        {
-          bind: [
-            project.id,
-            ownerUsername,
-            req.body?.title ? String(req.body.title) : null,
-            req.body?.description != null ? String(req.body.description) : ''
-          ],
-          type: QueryTypes.SELECT
-        }
-      );
-      newBlock = await Block.findByPk(rows?.[0]?.block_id);
-    } else {
-      const payload = {
-        title: req.body?.title,
-        description: req.body?.description ?? '',
-        startDate: req.body?.startDate,
-        releaseDate: req.body?.releaseDate,
-        effort: req.body?.effort ?? 40,
-        completed: false,
-        ownerUsername,
-        projectId: project.id
-      };
-      newBlock = await Block.create(payload);
+    if (!isPostgresRoadmap()) {
+      return res.status(503).json({ error: 'Создание этапов доступно только на Postgres' });
     }
-    if (!newBlock) {
+    const ownerUsername = String(project.ownerUsername || req.user.username || '').trim();
+    const rows = await sequelize.query(
+      'SELECT block_id FROM public.roadmap_create_block($1, $2, $3, $4)',
+      {
+        bind: [
+          project.id,
+          ownerUsername,
+          req.body?.title ? String(req.body.title) : null,
+          req.body?.description != null ? String(req.body.description) : ''
+        ],
+        type: QueryTypes.SELECT
+      }
+    );
+    const createdId = rows?.[0]?.block_id;
+    const created = createdId ? await readBlockPayload(createdId) : null;
+    if (!created) {
       return res.status(500).json({ error: 'Не удалось создать этап' });
     }
     await writeAuditLog({
       reqUser: req.user,
       action: 'block_create',
-      blockId: newBlock.id,
-      blockTitle: newBlock.title,
-      details: `Создан этап "${newBlock.title || 'Без названия'}"`
+      blockId: created.id,
+      blockTitle: created.title,
+      details: `Создан этап "${created.title || 'Без названия'}"`
     });
-    res.status(201).json(await hydrateOneBlock(newBlock));
+    res.status(201).json(created);
   } catch (error) {
     console.error('❌ Ошибка создания:', error);
     const mapped = pgErrorHttp(error);
@@ -2176,17 +2101,10 @@ app.put('/api/blocks/:id', authenticateToken, async (req, res) => {
     if (permissionNeeds.has('dragStages') && !hasPermission(req.user, 'dragStages')) {
       return res.status(403).json({ error: 'Нет права перетаскивания этапов' });
     }
-    const before = {
-      id: block.id,
-      title: block.title,
-      description: block.description,
-      ownerUsername: block.ownerUsername,
-      projectId: block.projectId,
-      startDate: block.startDate,
-      releaseDate: block.releaseDate,
-      effort: block.effort,
-      completed: block.completed
-    };
+    if (!isPostgresRoadmap()) {
+      return res.status(503).json({ error: 'Обновление этапов доступно только на Postgres' });
+    }
+    const before = await readBlockPayload(block.id);
     const project = await resolveProjectForWrite({
       user: req.user,
       requestedProjectId: req.body?.projectId ?? block.projectId,
@@ -2196,38 +2114,34 @@ app.put('/api/blocks/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Нет доступа к выбранному проекту' });
     }
     const ownerUsername = String(project.ownerUsername || block.ownerUsername || '').trim();
-    const nextStage = { ownerUsername, projectId: project.id };
-    for (const key of ['title', 'description', 'startDate', 'releaseDate', 'effort']) {
+    const patch = {
+      projectId: project.id,
+      ownerUsername
+    };
+    for (const key of ['title', 'description', 'startDate', 'releaseDate', 'effort', 'changedField']) {
       if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
-        nextStage[key] = req.body[key];
+        patch[key] = req.body[key];
       }
     }
-    await block.update(nextStage);
-    const after = {
-      id: block.id,
-      title: block.title,
-      description: block.description,
-      ownerUsername: block.ownerUsername,
-      projectId: block.projectId,
-      startDate: block.startDate,
-      releaseDate: block.releaseDate,
-      effort: block.effort,
-      completed: block.completed
-    };
+    await sequelize.query('SELECT public.roadmap_update_block($1, $2::jsonb)', {
+      bind: [block.id, JSON.stringify(patch)]
+    });
+    const after = await readBlockPayload(block.id);
     const changes = summarizeBlockChanges(before, after);
     if (changes.length) {
       await writeAuditLog({
         reqUser: req.user,
         action: 'block_update',
         blockId: block.id,
-        blockTitle: block.title,
+        blockTitle: after?.title || block.title,
         details: changes.join('; ')
       });
     }
-    res.json(await hydrateOneBlock(block));
+    res.json(after);
   } catch (error) {
     console.error('❌ Ошибка обновления:', error);
-    res.status(500).json({ error: error.message });
+    const mapped = pgErrorHttp(error);
+    res.status(mapped.status).json({ error: mapped.message });
   }
 });
 
@@ -2244,9 +2158,14 @@ app.delete('/api/blocks/:id', authenticateToken, async (req, res) => {
     if (!(await canMutateBlockViaProject(req.user, block))) {
       return res.status(403).json({ error: 'Нет доступа к этому этапу' });
     }
+    if (!isPostgresRoadmap()) {
+      return res.status(503).json({ error: 'Удаление этапов доступно только на Postgres' });
+    }
     const deletedBlockTitle = block.title;
     const deletedBlockId = block.id;
-    await block.destroy();
+    await sequelize.query('SELECT public.roadmap_delete_block($1)', {
+      bind: [block.id]
+    });
     await writeAuditLog({
       reqUser: req.user,
       action: 'block_delete',
@@ -2257,7 +2176,40 @@ app.delete('/api/blocks/:id', authenticateToken, async (req, res) => {
     res.status(204).send();
   } catch (error) {
     console.error('❌ Ошибка удаления:', error);
-    res.status(500).json({ error: error.message });
+    const mapped = pgErrorHttp(error);
+    res.status(mapped.status).json({ error: mapped.message });
+  }
+});
+
+app.patch('/api/blocks/:id/dates', authenticateToken, async (req, res) => {
+  try {
+    const access = await requireBlockMutation(req, req.params.id, 'dragStages', 'Нет права перетаскивания этапов');
+    if (access.errorStatus) return res.status(access.errorStatus).json({ error: access.errorMessage });
+    const before = await readBlockPayload(access.block.id);
+    await sequelize.query('SELECT public.roadmap_set_block_dates($1, $2, $3, $4)', {
+      bind: [
+        access.block.id,
+        req.body?.startDate != null ? String(req.body.startDate) : String(before?.startDate || ''),
+        req.body?.releaseDate != null ? String(req.body.releaseDate) : String(before?.releaseDate || ''),
+        req.body?.changedField != null ? String(req.body.changedField) : ''
+      ]
+    });
+    const after = await readBlockPayload(access.block.id);
+    const changes = summarizeBlockChanges(before, after);
+    if (changes.length) {
+      await writeAuditLog({
+        reqUser: req.user,
+        action: 'block_update',
+        blockId: access.block.id,
+        blockTitle: after?.title || access.block.title,
+        details: changes.join('; ')
+      });
+    }
+    res.json(after);
+  } catch (error) {
+    console.error('❌ Ошибка смены дат этапа:', error);
+    const mapped = pgErrorHttp(error);
+    res.status(mapped.status).json({ error: mapped.message });
   }
 });
 
@@ -2323,7 +2275,7 @@ app.put('/api/blocks/:id/tasks', authenticateToken, async (req, res) => {
     if (!Array.isArray(tasks)) {
       return res.status(400).json({ error: 'Ожидается массив tasks' });
     }
-    const current = await hydrateOneBlock(block);
+    const current = await readBlockPayload(block.id);
     const permissionNeeds = inferBlockPermissionNeeds(current, { tasks });
     if (permissionNeeds.has('editTasks') && !hasPermission(req.user, 'editTasks')) {
       return res.status(403).json({ error: 'Нет права редактирования задач' });
@@ -2337,7 +2289,11 @@ app.put('/api/blocks/:id/tasks', authenticateToken, async (req, res) => {
     if (permissionNeeds.has('dragTasks') && !hasPermission(req.user, 'dragTasks')) {
       return res.status(403).json({ error: 'Нет права перетаскивания задач' });
     }
-    await replaceBlockTasksInTables(block.id, tasks);
+    if (req.body?.mode === 'replace') {
+      await replaceBlockTasksInTables(block.id, tasks);
+    } else {
+      await syncBlockTasksInTables(block.id, tasks);
+    }
     const after = await hydrateBlockById(block.id);
     const changes = summarizeBlockChanges(current, after);
     if (changes.length) {
@@ -2467,14 +2423,31 @@ app.get('/api/blocks/:blockId/tasks/:taskId/files', authenticateToken, async (re
 app.post(
   '/api/blocks/:blockId/tasks/:taskId/files',
   authenticateToken,
-  express.raw({ type: 'application/octet-stream', limit: '52mb' }),
+  express.raw({
+    type: (req) => {
+      const ct = String(req.headers['content-type'] || '').toLowerCase();
+      return (
+        !ct ||
+        ct.includes('octet-stream') ||
+        ct.startsWith('application/') ||
+        ct.startsWith('image/') ||
+        ct.startsWith('video/') ||
+        ct.startsWith('audio/') ||
+        ct.startsWith('text/')
+      );
+    },
+    limit: '52mb'
+  }),
   async (req, res) => {
+    const startedAt = Date.now();
     try {
       const access = await requireBlockMutation(req, req.params.blockId, 'editTasks', 'Нет права редактирования задач');
       if (access.errorStatus) return res.status(access.errorStatus).json({ error: access.errorMessage });
-      const content = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      if (!content.length) return res.status(400).json({ error: 'Пустой файл' });
-      if (content.length > 50 * 1024 * 1024) return res.status(400).json({ error: 'Файл больше 50 МБ' });
+      const content = Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.isBuffer(req.body?.buffer)
+          ? Buffer.from(req.body.buffer)
+          : Buffer.alloc(0);
       const fileName = taskFileNameFromHeader(req);
       const mime = String(req.get('x-file-mime') || 'application/octet-stream').slice(0, 120);
       const rows = await sequelize.query(
@@ -2484,16 +2457,26 @@ app.post(
           type: QueryTypes.SELECT
         }
       );
+      const id = rows?.[0]?.id;
+      console.log(
+        `📎 Вложение сохранено: ${fileName} (${content.length} байт) за ${Date.now() - startedAt}мс id=${id || '-'}`
+      );
       res.status(201).json({
-        id: rows?.[0]?.id,
+        id,
         fileName,
         mime,
         byteSize: content.length
       });
     } catch (error) {
+      if (error?.type === 'request.aborted' || /request aborted/i.test(String(error?.message || ''))) {
+        console.warn('⚠️ Загрузка вложения прервана клиентом');
+        return;
+      }
       console.error('❌ Ошибка загрузки вложения:', error);
-      const mapped = pgErrorHttp(error);
-      res.status(mapped.status).json({ error: mapped.message });
+      if (!res.headersSent) {
+        const mapped = pgErrorHttp(error);
+        res.status(mapped.status).json({ error: mapped.message });
+      }
     }
   }
 );
@@ -2804,13 +2787,13 @@ app.get('/api/users/projects-overview/:projectId/tree', authenticateToken, async
     if (!project) {
       return res.status(404).json({ error: 'Проект не найден' });
     }
-    const blocks = await Block.findAll({
-      where: { projectId },
-      attributes: ['id', 'title', 'tasks'],
-      order: [['releaseDate', 'ASC'], ['createdAt', 'ASC']]
+    const blocks = await listRoadmapBlocks({
+      projectId,
+      owners: [],
+      extraProjectIds: [],
+      ownerFilter: false
     });
-    const hydrated = await hydrateBlocksFromTables(blocks);
-    const stages = hydrated.map((b) => {
+    const stages = blocks.map((b) => {
       const rawTasks = b.tasks;
       const list = Array.isArray(rawTasks) ? rawTasks : [];
       const tasks = [...list]

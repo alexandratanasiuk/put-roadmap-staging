@@ -6,6 +6,15 @@ package-lock.json
 *.sqlite
 *.sqlite-journal
 
+# Локальные бэкапы (могут содержать пароли и персональные данные)
+backend/backups/
+
+# Черновые скрипты со строкой подключения к базе
+backend/scripts/_tmp_*
+
+# Локальные pid запущенных процессов
+.runtime/
+
 # Логи
 npm-debug.log*
 yarn-debug.log*
@@ -13,6 +22,7 @@ yarn-error.log*
 
 # IDE
 .vscode/
+.vs/
 .idea/
 *.swp
 *.swo
@@ -31,10 +41,10 @@ dist-ssr/
 .env
 .env.local
 .env.*.local
-pg-backup.local.env
 
 # Не коммитить секреты!
 .env
+/.bat
 *.log
 node_modules/
 database.sqlite
